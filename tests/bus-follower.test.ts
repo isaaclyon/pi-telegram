@@ -105,6 +105,8 @@ test("Bus follower receiver handles leader-forwarded updates and target replacem
   const followerSocketPath = join(dir, "follower.sock");
   const registry = createTelegramBusFollowerRegistry();
   const received: unknown[] = [];
+  const forwardedEvents: string[] = [];
+  let messageHandled = false;
   let nowMs = 2000;
   const receiver = createTelegramBusForwardedUpdateReceiverRuntime({
     socketPath: followerSocketPath,
@@ -120,12 +122,17 @@ test("Bus follower receiver handles leader-forwarded updates and target replacem
     },
     handleForwardedMessage(message, ctx) {
       received.push({ kind: "message", message, ctx });
+      forwardedEvents.push("message-handler");
+      messageHandled = true;
     },
     handleForwardedEditedMessage(message, ctx) {
       received.push({ kind: "edited-message", message, ctx });
     },
     handleReplaceTarget(input, ctx) {
       received.push({ kind: "replace-target", input, ctx });
+    },
+    afterForwardedUpdateHandled() {
+      if (messageHandled) forwardedEvents.push("after-handler");
     },
   });
   const leader = createTelegramBusLocalServer({
@@ -178,6 +185,8 @@ test("Bus follower receiver handles leader-forwarded updates and target replacem
       },
     });
     assert.equal(registry.get("inst-b")?.lastHeartbeatMs, 4000);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(forwardedEvents, ["message-handler", "after-handler"]);
     nowMs = 5000;
     const editedMessageResponse = await sendTelegramBusLocalEnvelope({
       socketPath: leaderSocketPath,
@@ -1093,6 +1102,78 @@ test("Bus follower API caller sends method calls and returns leader results", as
     ]);
   } finally {
     await server.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Bus follower defers replacement flush until concurrent forwarded handlers unwind", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-bus-flush-"));
+  const socketPath = join(dir, "follower.sock");
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let firstStarted!: () => void;
+  const firstStartedPromise = new Promise<void>((resolve) => {
+    firstStarted = resolve;
+  });
+  let secondHandled!: () => void;
+  const secondHandledPromise = new Promise<void>((resolve) => {
+    secondHandled = resolve;
+  });
+  let flushes = 0;
+  const receiver = createTelegramBusForwardedUpdateReceiverRuntime({
+    socketPath,
+    instanceId: "inst-b",
+    getContext: () => "ctx",
+    handleForwardedCallback: async () => undefined,
+    handleForwardedReaction: async () => undefined,
+    async handleForwardedMessage(message: { message_id: number }) {
+      if (message.message_id === 1) {
+        firstStarted();
+        await firstGate;
+      } else {
+        secondHandled();
+      }
+    },
+    afterForwardedUpdateHandled() {
+      flushes += 1;
+    },
+  });
+
+  try {
+    await receiver.start();
+    const firstResponse = sendTelegramBusLocalEnvelope({
+      socketPath,
+      envelope: {
+        kind: "leader.forwardMessage",
+        requestId: "leader:concurrent-1",
+        recipientInstanceId: "inst-b",
+        message: { message_id: 1 },
+        sentAtMs: 1,
+      },
+    });
+    await firstStartedPromise;
+    const secondResponse = sendTelegramBusLocalEnvelope({
+      socketPath,
+      envelope: {
+        kind: "leader.forwardMessage",
+        requestId: "leader:concurrent-2",
+        recipientInstanceId: "inst-b",
+        message: { message_id: 2 },
+        sentAtMs: 2,
+      },
+    });
+    await secondHandledPromise;
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.equal(flushes, 0);
+
+    releaseFirst();
+    await Promise.all([firstResponse, secondResponse]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.equal(flushes, 1);
+  } finally {
+    await receiver.stop();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -158,6 +158,7 @@ export const TELEGRAM_COMMAND_EMOJI = {
   model: "🤖",
   thinking: "🧠",
   compact: "🗜",
+  new: "🆕",
   queue: "🔢",
   thread: "🧵",
   next: "⏩",
@@ -202,6 +203,10 @@ export const TELEGRAM_BUILTIN_BOT_COMMANDS: readonly TelegramBotCommandDefinitio
         "compact",
         "Compact current session",
       ),
+    },
+    {
+      command: "new",
+      description: formatTelegramCommandEmojiPrefix("new") + "Start fresh session",
     },
     {
       command: "next",
@@ -428,6 +433,7 @@ export const TELEGRAM_RESERVED_COMMAND_NAMES = [
   "status",
   "queue",
   "compact",
+  "new",
   "model",
   "thinking",
   "settings",
@@ -459,6 +465,7 @@ export type TelegramCommandAction =
   | { kind: "continue"; executionMode: "immediate" }
   | { kind: "queue"; executionMode: "immediate" }
   | { kind: "compact"; executionMode: "immediate" }
+  | { kind: "new"; executionMode: "immediate" }
   | { kind: "status"; executionMode: "immediate" }
   | { kind: "model"; executionMode: "immediate" }
   | { kind: "thinking"; executionMode: "immediate" }
@@ -478,6 +485,7 @@ export interface TelegramCommandActionDeps<TMessage, TContext> {
   handleContinue: (message: TMessage, ctx: TContext) => Promise<void>;
   handleQueue: (message: TMessage, ctx: TContext) => Promise<void>;
   handleCompact: (message: TMessage, ctx: TContext) => Promise<void>;
+  handleNew?: (message: TMessage, ctx: TContext) => Promise<void>;
   handleStatus: (message: TMessage, ctx: TContext) => Promise<void>;
   handleModel: (message: TMessage, ctx: TContext) => Promise<void>;
   handleThinking: (message: TMessage, ctx: TContext) => Promise<void>;
@@ -509,6 +517,45 @@ export interface TelegramRuntimeEventRecorderPort {
 
 export interface TelegramCompactConfirmationReplyMarkup {
   inline_keyboard: { text: string; callback_data: string }[][];
+}
+
+export type TelegramNewSessionTarget = Pick<
+  TelegramCommandMessageTarget,
+  "chatId" | "threadId"
+>;
+
+export interface TelegramNewSessionReadinessState {
+  idle: boolean;
+  pendingMessages: boolean;
+  activeTelegramTurn: boolean;
+  dispatchPending: boolean;
+  queuedTelegramItems: boolean;
+  compactionInProgress: boolean;
+}
+
+export interface TelegramNewSessionReadinessPorts<TContext> {
+  getContext: () => TContext | undefined;
+  isIdle: (ctx: TContext) => boolean;
+  hasPendingMessages: (ctx: TContext) => boolean;
+  hasActiveTelegramTurn: () => boolean;
+  hasDispatchPending: () => boolean;
+  hasQueuedTelegramItems: () => boolean;
+  isCompactionInProgress: () => boolean;
+}
+
+export interface TelegramNewSessionCommandDeps<TMessage> {
+  isIdle: () => boolean;
+  hasPendingMessages: () => boolean;
+  hasActiveTelegramTurn: () => boolean;
+  hasDispatchPending: () => boolean;
+  hasQueuedTelegramItems: () => boolean;
+  isCompactionInProgress: () => boolean;
+  hasPendingSessionReplacement: () => boolean;
+  requestNewSession: (
+    target: TelegramNewSessionTarget,
+  ) => { accepted: boolean; reason?: string };
+  getMessageTarget: (message: TMessage) => TelegramNewSessionTarget;
+  sendTextReply: (text: string) => Promise<void>;
 }
 
 export interface TelegramCompactCommandDeps extends TelegramRuntimeEventRecorderPort {
@@ -646,6 +693,18 @@ export interface TelegramCommandTargetRuntime<
   openModelMenu: (message: TMessage, ctx: TContext) => Promise<void>;
   openSettingsMenu: (message: TMessage, ctx: TContext) => Promise<void>;
   sendTextReply: (message: TMessage, text: string) => Promise<void>;
+}
+
+export function getTelegramNewSessionMessageTarget(
+  message: TelegramCommandRuntimeMessage,
+): TelegramNewSessionTarget {
+  return {
+    chatId: message.chat.id,
+    threadId:
+      typeof message.message_thread_id === "number"
+        ? message.message_thread_id
+        : undefined,
+  };
 }
 
 export function getTelegramCommandMessageTarget(
@@ -809,6 +868,11 @@ export interface TelegramCommandOrPromptRuntimeDeps<TMessage, TContext> {
     message: TMessage,
     ctx: TContext,
   ) => Promise<boolean>;
+  hasPendingSessionReplacement?: () => boolean;
+  replyWhileSessionReplacementPending?: (
+    message: TMessage,
+    ctx: TContext,
+  ) => Promise<void>;
   executeExtensionCommand?: (
     command: ParsedTelegramCommand,
     message: TMessage,
@@ -837,6 +901,10 @@ export interface TelegramCommandRuntimeDeps<
   hasActiveTelegramTurn: () => boolean;
   hasDispatchPending: () => boolean;
   isCompactionInProgress: () => boolean;
+  hasPendingSessionReplacement?: () => boolean;
+  requestNewSession?: (
+    target: TelegramNewSessionTarget,
+  ) => { accepted: boolean; reason?: string };
   setCompactionInProgress: (inProgress: boolean) => void;
   updateStatus: (ctx: TContext) => void;
   dispatchNextQueuedTelegramTurn: (ctx: TContext) => void;
@@ -884,6 +952,7 @@ export const TELEGRAM_APP_MENU_INTRO_HTML = [
   "",
   `${formatTelegramCommandEmojiPrefix("start")}/start — Open menu / Pair bridge`,
   `${formatTelegramCommandEmojiPrefix("compact")}/compact — Compact current session`,
+  `${formatTelegramCommandEmojiPrefix("new")}/new — Start fresh session`,
   `${formatTelegramCommandEmojiPrefix("next")}/next — Force next turn`,
   `${formatTelegramCommandEmojiPrefix("continue")}/continue — Queue continue prompt`,
   `${formatTelegramCommandEmojiPrefix("abort")}/abort — Abort Pi`,
@@ -924,6 +993,7 @@ function buildTelegramAppMenuIntroHtml(): string {
     "",
     `${formatTelegramCommandEmojiPrefix("start")}/start — Open menu / Pair bridge`,
     `${formatTelegramCommandEmojiPrefix("compact")}/compact — Compact current session`,
+    `${formatTelegramCommandEmojiPrefix("new")}/new — Start fresh session`,
     ...extensionLines,
     `${formatTelegramCommandEmojiPrefix("next")}/next — Force next turn`,
     `${formatTelegramCommandEmojiPrefix("continue")}/continue — Queue continue prompt`,
@@ -978,6 +1048,7 @@ export const TELEGRAM_COMMAND_ACTIONS = {
   status: { kind: "status", executionMode: "immediate" },
   queue: { kind: "queue", executionMode: "immediate" },
   compact: { kind: "compact", executionMode: "immediate" },
+  new: { kind: "new", executionMode: "immediate" },
   model: { kind: "model", executionMode: "immediate" },
   thinking: { kind: "thinking", executionMode: "immediate" },
   settings: { kind: "settings", executionMode: "immediate" },
@@ -1002,6 +1073,75 @@ export function getTelegramCommandExecutionMode(
 
 function formatTelegramQueuedTurnCount(count: number): string {
   return count === 1 ? "1 queued turn" : `${count} queued turns`;
+}
+
+export function getTelegramNewSessionBlockingReason(
+  state: TelegramNewSessionReadinessState,
+): string | undefined {
+  if (!state.idle) return "Cannot start a new session while Pi is busy.";
+  if (state.pendingMessages) {
+    return "Cannot start a new session while Pi has pending messages.";
+  }
+  if (state.activeTelegramTurn) {
+    return "Cannot start a new session during an active Telegram turn.";
+  }
+  if (state.dispatchPending) {
+    return "Cannot start a new session while Telegram dispatch is pending.";
+  }
+  if (state.queuedTelegramItems) {
+    return "Cannot start a new session while the Telegram queue is non-empty.";
+  }
+  if (state.compactionInProgress) {
+    return "Cannot start a new session while compaction is active.";
+  }
+  return undefined;
+}
+
+export function createTelegramNewSessionReadinessCheck<TContext>(
+  deps: TelegramNewSessionReadinessPorts<TContext>,
+): () => string | undefined {
+  return () => {
+    const ctx = deps.getContext();
+    if (!ctx) return "Cannot start a new session without an active Pi session.";
+    return getTelegramNewSessionBlockingReason({
+      idle: deps.isIdle(ctx),
+      pendingMessages: deps.hasPendingMessages(ctx),
+      activeTelegramTurn: deps.hasActiveTelegramTurn(),
+      dispatchPending: deps.hasDispatchPending(),
+      queuedTelegramItems: deps.hasQueuedTelegramItems(),
+      compactionInProgress: deps.isCompactionInProgress(),
+    });
+  };
+}
+
+export async function handleTelegramNewSessionCommand<TMessage>(
+  message: TMessage,
+  deps: TelegramNewSessionCommandDeps<TMessage>,
+): Promise<void> {
+  const blockingReason = getTelegramNewSessionBlockingReason({
+    idle: deps.isIdle(),
+    pendingMessages: deps.hasPendingMessages(),
+    activeTelegramTurn: deps.hasActiveTelegramTurn(),
+    dispatchPending: deps.hasDispatchPending(),
+    queuedTelegramItems: deps.hasQueuedTelegramItems(),
+    compactionInProgress: deps.isCompactionInProgress(),
+  });
+  if (blockingReason) {
+    await deps.sendTextReply(blockingReason);
+    return;
+  }
+  if (deps.hasPendingSessionReplacement()) {
+    await deps.sendTextReply("A new session replacement is already pending.");
+    return;
+  }
+  const result = deps.requestNewSession(deps.getMessageTarget(message));
+  if (!result.accepted) {
+    await deps.sendTextReply(
+      result.reason ?? "New session is unavailable from this Pi host.",
+    );
+    return;
+  }
+  await deps.sendTextReply("🆕 Starting a new session in this thread.");
 }
 
 export async function handleTelegramStopCommand(
@@ -1292,6 +1432,10 @@ export async function executeTelegramCommandAction<TMessage, TContext>(
     case "compact":
       await deps.handleCompact(message, ctx);
       return true;
+    case "new":
+      if (!deps.handleNew) return false;
+      await deps.handleNew(message, ctx);
+      return true;
     case "status":
       await deps.handleStatus(message, ctx);
       return true;
@@ -1368,6 +1512,9 @@ export function createTelegramCommandHandlerTargetRuntime<
     hasActiveTelegramTurn: deps.hasActiveTelegramTurn,
     hasDispatchPending: deps.hasDispatchPending,
     isCompactionInProgress: deps.isCompactionInProgress,
+    hasPendingSessionReplacement: deps.hasPendingSessionReplacement ?? (() => false),
+    requestNewSession:
+      deps.requestNewSession ?? (() => ({ accepted: false, reason: "New session is unavailable from this Pi host." })),
     setCompactionInProgress: deps.setCompactionInProgress,
     updateStatus: deps.updateStatus,
     dispatchNextQueuedTelegramTurn: deps.dispatchNextQueuedTelegramTurn,
@@ -1419,6 +1566,13 @@ export function createTelegramCommandOrPromptRuntime<TMessage, TContext>(
       if (!firstMessage) return;
       if (deps.shouldIgnoreMessages?.(messages)) return;
       const command = parseTelegramCommand(deps.extractRawText(messages));
+      if (
+        command?.name !== "new" &&
+        deps.hasPendingSessionReplacement?.()
+      ) {
+        await deps.replyWhileSessionReplacementPending?.(firstMessage, ctx);
+        return;
+      }
       const handled = await deps.handleCommand(
         command?.name,
         firstMessage,
@@ -1554,6 +1708,26 @@ async function handleTelegramCommandRuntime<
           stopTypingLoop: deps.stopTypingLoop,
           sendTextReply: sendReplyFor(nextMessage),
           recordRuntimeEvent: deps.recordRuntimeEvent,
+        });
+      },
+      handleNew: async (nextMessage, commandCtx) => {
+        await handleTelegramNewSessionCommand(nextMessage, {
+          isIdle: () => deps.isIdle(commandCtx),
+          hasPendingMessages: () => deps.hasPendingMessages(commandCtx),
+          hasActiveTelegramTurn: deps.hasActiveTelegramTurn,
+          hasDispatchPending: deps.hasDispatchPending,
+          hasQueuedTelegramItems: deps.hasQueuedTelegramItems,
+          isCompactionInProgress: deps.isCompactionInProgress,
+          hasPendingSessionReplacement:
+            deps.hasPendingSessionReplacement ?? (() => false),
+          requestNewSession:
+            deps.requestNewSession ??
+            (() => ({
+              accepted: false,
+              reason: "New session is unavailable from this Pi host.",
+            })),
+          getMessageTarget: getTelegramNewSessionMessageTarget,
+          sendTextReply: sendReplyFor(nextMessage),
         });
       },
       handleStatus: async (nextMessage, commandCtx) => {

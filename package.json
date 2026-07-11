@@ -17,11 +17,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/llblab/pi-telegram.git"
+    "url": "https://github.com/isaaclyon/pi-telegram.git"
   },
-  "homepage": "https://github.com/llblab/pi-telegram",
+  "homepage": "https://github.com/isaaclyon/pi-telegram",
   "bugs": {
-    "url": "https://github.com/llblab/pi-telegram/issues"
+    "url": "https://github.com/isaaclyon/pi-telegram/issues"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -53,13 +53,14 @@
     "./sections": "./api/sections.ts",
     "./status": "./api/status.ts",
     "./voice": "./api/voice.ts",
-    "./keyboard": "./api/keyboard.ts"
+    "./keyboard": "./api/keyboard.ts",
+    "./host": "./api/host.ts"
   },
   "pi": {
     "extensions": [
       "./index.ts"
     ],
-    "image": "https://github.com/llblab/pi-telegram/raw/main/screenshot.png"
+    "image": "https://github.com/isaaclyon/pi-telegram/raw/main/screenshot.png"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",

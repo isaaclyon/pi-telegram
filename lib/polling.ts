@@ -160,6 +160,7 @@ export function createTelegramPollingControllerRuntime<
       getUpdates: deps.getUpdates,
       persistConfig: deps.persistConfig,
       handleUpdate: deps.handleUpdate,
+      afterUpdatePersisted: deps.afterUpdatePersisted,
       updateStatus: deps.updateStatus,
       sleep: deps.sleep,
       maxUpdateFailures: deps.maxUpdateFailures,
@@ -772,6 +773,7 @@ export interface TelegramPollLoopDeps<
   ) => Promise<TUpdate[]>;
   persistConfig: () => Promise<void>;
   handleUpdate: (update: TUpdate, ctx: TContext) => Promise<void>;
+  afterUpdatePersisted?: () => boolean | void;
   onErrorStatus: (message: string) => void;
   onStatusReset: () => void;
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -790,6 +792,7 @@ export interface TelegramPollLoopRunnerDeps<
   ) => Promise<TUpdate[]>;
   persistConfig: () => Promise<void>;
   handleUpdate: (update: TUpdate, ctx: TContext) => Promise<void>;
+  afterUpdatePersisted?: () => boolean | void;
   updateStatus: (ctx: TContext, message?: string) => void;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   maxUpdateFailures?: number;
@@ -836,6 +839,7 @@ export function createTelegramPollLoopRunner<
       getUpdates: deps.getUpdates,
       persistConfig: deps.persistConfig,
       handleUpdate: deps.handleUpdate,
+      afterUpdatePersisted: deps.afterUpdatePersisted,
       onErrorStatus: (message) => {
         updateTelegramPollingStatusSafely(deps.updateStatus, ctx, {
           message,
@@ -908,6 +912,7 @@ export async function runTelegramPollLoop<
           deps.config.lastUpdateId = update.update_id;
           updateFailures.delete(update.update_id);
           await deps.persistConfig();
+          if (deps.afterUpdatePersisted?.() === true) return;
         } catch (error) {
           const failureCount = (updateFailures.get(update.update_id) ?? 0) + 1;
           updateFailures.set(update.update_id, failureCount);
@@ -927,6 +932,7 @@ export async function runTelegramPollLoop<
           deps.config.lastUpdateId = update.update_id;
           updateFailures.delete(update.update_id);
           await deps.persistConfig();
+          if (deps.afterUpdatePersisted?.() === true) return;
         }
       }
     } catch (error) {

@@ -200,6 +200,7 @@ test("Package exports expose only stable public domains", () => {
     "./status": "./api/status.ts",
     "./voice": "./api/voice.ts",
     "./keyboard": "./api/keyboard.ts",
+    "./host": "./api/host.ts",
   });
 });
 

@@ -335,6 +335,7 @@ export interface TelegramBusForwardedUpdateReceiverRuntimeDeps<
     },
     ctx: TContext,
   ) => Promise<void> | void;
+  afterForwardedUpdateHandled?: () => void;
   recordRuntimeEvent?: (
     category: string,
     error: unknown,
@@ -957,6 +958,26 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
     TMessage
   >,
 ): TelegramBusForwardedUpdateReceiverRuntime {
+  let activeForwardedHandlers = 0;
+  let flushRequested = false;
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleFlushWhenIdle = (): void => {
+    if (
+      !deps.afterForwardedUpdateHandled ||
+      !flushRequested ||
+      activeForwardedHandlers !== 0 ||
+      flushTimer
+    ) {
+      return;
+    }
+    flushTimer = setTimeout(() => {
+      flushTimer = undefined;
+      if (activeForwardedHandlers !== 0 || !flushRequested) return;
+      flushRequested = false;
+      deps.afterForwardedUpdateHandled?.();
+    }, 0);
+    flushTimer.unref?.();
+  };
   const server = createTelegramBusLocalServer({
     socketPath: deps.socketPath,
     recordTransportEvent(phase, details) {
@@ -994,6 +1015,8 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
           message: "Telegram bus follower has no active context.",
         };
       }
+      let shouldFlush = false;
+      activeForwardedHandlers += 1;
       try {
         if (envelope.kind === "leader.forwardCallback") {
           await deps.handleForwardedCallback(
@@ -1037,6 +1060,7 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
             ctx,
           );
         }
+        shouldFlush = true;
         return { kind: "bus.ack", requestId: envelope.requestId, ok: true };
       } catch (error) {
         deps.recordRuntimeEvent?.("bus", error, { phase: "follower-forward" });
@@ -1049,6 +1073,10 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
               ? error.message
               : "Telegram bus follower dispatch failed.",
         };
+      } finally {
+        activeForwardedHandlers -= 1;
+        if (shouldFlush) flushRequested = true;
+        scheduleFlushWhenIdle();
       }
     },
   });

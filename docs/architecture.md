@@ -34,7 +34,7 @@ Keep this boundary explicit:
 
 - Do not use raw TTY injection, ANSI terminal clearing, private TUI container mutation, or a shadow `pi` subprocess to simulate interactive commands.
 - Do not treat Telegram as a generic remote shell for every Pi slash command.
-- Commands that require interactive session replacement or TUI rerendering, such as a true Telegram `/new`, need a public Pi API that invokes the same runtime path as the terminal command.
+- Telegram `/new` uses only the optional narrow host-registered `registerTelegramHostNewSession` capability. The host provider must invoke Pi's official session-replacement path; pi-telegram retains no `ExtensionContext` and reports unavailable when the provider is absent.
 - A separate PTY supervisor or daemon could choose to own those risks, but that would be a different product mode rather than this extension's runtime contract.
 
 The repository uses a **Flat Domain DAG**:
@@ -151,7 +151,7 @@ All inbound updates are gated by the configured authorized user id.
 ### Inbound Turn Flow
 
 1. Poll updates through `getUpdates`.
-2. Persist update offsets only after successful handling; repeated handler failures are bounded.
+2. Persist update offsets only after successful handling; repeated handler failures are bounded. Deferred `/new` replacement is flushed only after this persistence completes for a polling owner; follower replacement is flushed only after its forwarded handler returns.
 3. Filter to the paired private user; guest-mode updates require an existing paired user and cannot establish first pairing.
 4. Dispatch owned callbacks and controls before fallback prompt forwarding.
 5. Coalesce media groups and likely split long text when needed.
@@ -203,6 +203,7 @@ Immediate controls:
 - `/next` dispatches the next queued turn, aborting Pi first when needed.
 - `/abort` aborts active work while preserving queued items. Abort-history preservation is enabled only for Telegram-owned active turns; later local/non-Telegram agent starts clear stale abort-history mode so the next Telegram prompt appends instead of absorbing old queued turns as history.
 - `/stop` aborts and clears waiting Telegram queue items.
+- `/new` is consumed immediately after checking idle, pending-message, active-turn, dispatch, queue, compaction, duplicate-replacement, and host-capability guards. Accepted requests preserve the exact target and defer the host call to the owner-specific flush seam.
 
 Queued controls:
 

@@ -615,6 +615,10 @@ export interface TelegramInboundRouteRuntimeDeps<
   ) => void;
   isIdle: (ctx: TContext) => boolean;
   hasPendingMessages: (ctx: TContext) => boolean;
+  hasPendingSessionReplacement?: () => boolean;
+  requestNewSession?: (
+    target: { chatId: number; threadId?: number },
+  ) => { accepted: boolean; reason?: string };
   compact: (
     ctx: TContext,
     callbacks: { onComplete: () => void; onError: (error: unknown) => void },
@@ -1532,6 +1536,14 @@ export function createTelegramInboundRouteRuntime<
     hasActiveTelegramTurn: deps.activeTurnRuntime.has,
     hasDispatchPending: deps.bridgeRuntime.lifecycle.hasDispatchPending,
     isCompactionInProgress: deps.bridgeRuntime.lifecycle.isCompactionInProgress,
+    hasPendingSessionReplacement:
+      deps.hasPendingSessionReplacement ?? (() => false),
+    requestNewSession:
+      deps.requestNewSession ??
+      (() => ({
+        accepted: false,
+        reason: "New session is unavailable from this Pi host.",
+      })),
     setCompactionInProgress:
       deps.bridgeRuntime.lifecycle.setCompactionInProgress,
     updateStatus: deps.updateStatus,
@@ -1760,6 +1772,16 @@ export function createTelegramInboundRouteRuntime<
     shouldIgnoreMessages: (messages) =>
       !Media.hasTelegramMessagesPromptContent(messages),
     handleCommand: commandHandler,
+    hasPendingSessionReplacement:
+      deps.hasPendingSessionReplacement ?? (() => false),
+    replyWhileSessionReplacementPending: async (message) => {
+      await deps.sendTextReply(
+        message.chat.id,
+        message.message_id,
+        "A new session replacement is already pending.",
+        { target: Updates.getTelegramMessageTarget(message) },
+      );
+    },
     executeExtensionCommand: async (command, message, ctx) => {
       const extensionCommand = Commands.findTelegramExtensionCommand(
         command.name,

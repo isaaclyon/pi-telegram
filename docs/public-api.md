@@ -21,6 +21,7 @@ import { registerTelegramUpdateHandler } from "@llblab/pi-telegram/updates";
 import { registerTelegramCommand } from "@llblab/pi-telegram/commands";
 import { registerTelegramInboundHandler } from "@llblab/pi-telegram/inbound";
 import { registerTelegramOutboundHandler } from "@llblab/pi-telegram/outbound";
+import { registerTelegramHostNewSession } from "@llblab/pi-telegram/host";
 import {
   registerTelegramVoiceSynthesisProvider,
   registerTelegramVoiceTranscriptionProvider,
@@ -50,10 +51,13 @@ Stable commands inside the paired Telegram DM:
 - `/continue` — enqueue a priority `continue` prompt.
 - `/abort` — abort active work and keep the queue; abort-history is scoped to Telegram-owned active turns.
 - `/stop` — abort active Telegram-owned work and clear waiting Telegram queue items.
+- `/new` — request an official same-session replacement in the current Telegram target when the host capability is available. It is consumed as a command, never queued as a prompt.
+
+`/new` admission requires an idle Pi host with no pending Pi messages, active Telegram turn, pending dispatch, queued Telegram items, compaction, or duplicate replacement. The command preserves the exact `{ chatId, threadId? }` target. A polling owner starts replacement only after the accepted update offset is persisted; a follower starts it only after its forwarded inbound handler unwinds. If the host capability is absent, the command replies that new sessions are unavailable.
 
 Hidden compatibility shortcuts may open sections directly: `/help`, `/status`, `/model`, `/thinking`, `/queue`, and `/settings`.
 
-This command surface is a mobile companion subset, not a raw terminal-command bridge. Commands that depend on Pi's interactive runtime owning session replacement, TUI transcript clearing, or arbitrary slash-command dispatch stay out of the stable Telegram API unless Pi exposes a safe public extension hook for them.
+This command surface is a mobile companion subset, not a raw terminal-command bridge. `/new` is the sole session-replacement control and is limited to the narrow host capability documented below; arbitrary slash-command dispatch and TUI manipulation remain outside the API.
 
 ### Tools and assistant-authored actions
 
@@ -66,6 +70,16 @@ This command surface is a mobile companion subset, not a raw terminal-command br
 Prompt guidance is context-aware: local/TUI prompts see only explicit direct-delivery guidance, while Telegram-originated turns receive the full action-comment syntax and phone-width output contract.
 
 See [Outbound Handlers](./outbound.md) for exact markup forms.
+
+## Host Capability
+
+Import from `@llblab/pi-telegram/host` only from the Pi host integration that owns session lifecycle:
+
+```ts
+const unregister = registerTelegramHostNewSession(() => runtime.newSession());
+```
+
+The registered callable is deliberately narrow: it returns `{ cancelled: boolean }` and must delegate to the same official session-replacement path used by Pi's terminal command. A non-cancelled provider resolution means the official host replacement completed and rebound; provider errors reject the request. pi-telegram stores only a short-lived target handoff and does not retain an `ExtensionContext`; the host owns context binding and lifecycle replacement. Registration is optional, so `/new` reports an unavailable response when no host capability is present. The host capability registry is process-global and enforces one bridge runtime/provider per JavaScript realm; this host runs one bridge runtime. Only one host provider may be registered in a process, and the disposer is identity-safe.
 
 ## Configuration API
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased: Telegram `/new` Hardening
+
+- `[Fresh Sessions]` Added the guarded Telegram `/new` command, which consumes the command, preserves the exact `{ chatId, threadId? }` target, and delegates only through the optional narrow host capability for Pi's official session-replacement path. The command reports unavailable hosts and rejects busy, queued, compacting, or duplicate-replacement sessions.
+- `[Scheduling]` Removed the replacement runtime's independent timer. Polling owners flush only after update-offset persistence, while followers flush only after forwarded inbound handling unwinds, preventing session replacement from racing persisted routing state.
+- `[Architecture]` Moved session-start composition into the owning replacement domain so `index.ts` remains a pure, arrow-free composition root; the runtime retains no `ExtensionContext`.
+- `[Validation]` Added command, host, replacement, follower, and polling regressions for command consumption, guard coverage, exact targets, cancellation, provider failure, unavailable hosts, offset ordering, and deferred invocation.
+
 ## 0.20.6: Guest Attribution And Voice Action Hotfix
 
 - `[Voice Action Syntax]` Hidden `telegram_voice` actions now accept the intuitive paired form `<!-- telegram_voice ... -->...<!-- /telegram_voice -->` alongside inline, attribute-text, and single-comment multiline forms. The parser captures a non-empty multiline body and preserves language/rate attributes while leaving surrounding prose visible. Impact: agents can use an explicit closing tag without leaking the intended TTS payload as ordinary text.

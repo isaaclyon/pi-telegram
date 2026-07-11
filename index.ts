@@ -35,6 +35,7 @@ import * as Routing from "./lib/routing.ts";
 import * as Runtime from "./lib/runtime.ts";
 import * as Logs from "./lib/logs.ts";
 import * as Sections from "./lib/sections.ts";
+import * as SessionReplacement from "./lib/session-replacement.ts";
 import * as Status from "./lib/status.ts";
 import * as Sync from "./lib/sync.ts";
 import * as TelegramApi from "./lib/telegram-api.ts";
@@ -539,6 +540,26 @@ export default function (pi: Pi.ExtensionAPI) {
       getHandlers: configStore.getOutboundHandlers,
       recordRuntimeEvent,
     });
+  const newSessionReadiness =
+    Commands.createTelegramNewSessionReadinessCheck({
+      getContext() {
+        return telegramSessionContextStore.get();
+      },
+      isIdle,
+      hasPendingMessages,
+      hasActiveTelegramTurn: activeTurnRuntime.has,
+      hasDispatchPending: bridgeRuntime.lifecycle.hasDispatchPending,
+      hasQueuedTelegramItems: telegramQueueStore.hasQueuedItems,
+      isCompactionInProgress: bridgeRuntime.lifecycle.isCompactionInProgress,
+    });
+  const sessionReplacementRuntime =
+    SessionReplacement.createTelegramSessionReplacementRuntime({
+      async sendTargetText(target, text) {
+        await sendTextReply(target.chatId, undefined, text, { target });
+      },
+      getBlockingReason: newSessionReadiness,
+      recordRuntimeEvent,
+    });
   const dispatchNextQueuedTelegramTurn =
     Queue.createTelegramQueueDispatchRuntime({
       ...telegramQueueStore,
@@ -835,6 +856,8 @@ export default function (pi: Pi.ExtensionAPI) {
     sendUserMessage,
     isIdle,
     hasPendingMessages,
+    hasPendingSessionReplacement: sessionReplacementRuntime.isPending,
+    requestNewSession: sessionReplacementRuntime.request,
     compact,
     recordRuntimeEvent,
   });
@@ -885,6 +908,7 @@ export default function (pi: Pi.ExtensionAPI) {
             ctx,
           );
         },
+        afterForwardedUpdateHandled: sessionReplacementRuntime.flushAfterInboundHandler,
         recordRuntimeEvent,
       },
       targetReplacement: {
@@ -957,6 +981,7 @@ export default function (pi: Pi.ExtensionAPI) {
     handleUpdate: Updates.createTelegramUpdateHandle({
       defaultHandle: inboundRouteRuntime.handleUpdate,
     }),
+    afterUpdatePersisted: sessionReplacementRuntime.flushAfterUpdatePersisted,
     stopTypingLoop: typing.stop,
     updateStatus,
     recordRuntimeEvent,
@@ -1252,16 +1277,22 @@ export default function (pi: Pi.ExtensionAPI) {
     baseSessionLifecycleRuntime,
     Lifecycle.createTelegramSessionContextTracker(telegramSessionContextStore),
   );
+  const refreshTelegramFollowerSession =
+    BusFollower.createTelegramBusFollowerSessionRefreshHook({
+      registrationState: telegramBusFollowerRegistrationState,
+      registrationRuntime: telegramBusFollowerRegistration,
+      getLeaderState() {
+        return lockRuntime.getState();
+      },
+      updateStatus,
+      recordRuntimeEvent,
+    });
   const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
     sessionLifecycleWithContext,
     {
-      onSessionStart: BusFollower.createTelegramBusFollowerSessionRefreshHook({
-        registrationState: telegramBusFollowerRegistrationState,
-        registrationRuntime: telegramBusFollowerRegistration,
-        getLeaderState() {
-          return lockRuntime.getState();
-        },
-        updateStatus,
+      onSessionStart: SessionReplacement.createTelegramSessionStartHook({
+        refreshFollowerSession: refreshTelegramFollowerSession,
+        onSessionStart: sessionReplacementRuntime.onSessionStart,
         recordRuntimeEvent,
       }),
     },
