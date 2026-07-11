@@ -27,7 +27,7 @@ pi install git:github.com/llblab/pi-telegram
 For the host-backed `/new` capability, install the reviewed fork commit exactly rather than a floating branch:
 
 ```bash
-pi install git:github.com/isaaclyon/pi-telegram#8cd47ab31a6e41c748acfa773b020cde1768339e
+pi install git:github.com/isaaclyon/pi-telegram#3f2ed12ebb8e9533f2c46b9b38a707e6ba1c8246
 ```
 
 ## Quick Start
