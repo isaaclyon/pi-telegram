@@ -711,6 +711,33 @@ test("Poll loop flushes deferred work only after offset persistence", async () =
   assert.equal(calls, 1);
 });
 
+test("Poll loop awaits persistence confirmation before scheduling replacement", async () => {
+  const config = { botToken: "123:abc", lastUpdateId: 5 };
+  const events: string[] = [];
+  await runTelegramPollLoop({
+    ctx: TEST_CONTEXT,
+    signal: new AbortController().signal,
+    config,
+    deleteWebhook: async () => {},
+    getUpdates: async () => [{ update_id: 6 }],
+    persistConfig: async () => {
+      events.push("persist");
+    },
+    handleUpdate: async () => {
+      events.push("handle");
+    },
+    afterUpdatePersisted: async () => {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      events.push("persistence-confirmed");
+      return true;
+    },
+    onErrorStatus: () => {},
+    onStatusReset: () => {},
+    sleep: async () => {},
+  });
+  assert.deepEqual(events, ["handle", "persist", "persistence-confirmed"]);
+});
+
 test("Poll loop persists long-poll offsets only after handling updates", async () => {
   const config = { botToken: "123:abc", lastUpdateId: 5 };
   const handled: number[] = [];

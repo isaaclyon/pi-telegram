@@ -9,6 +9,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import testRoot, { mock, type TestContext } from "node:test";
 
+import { registerTelegramHostNewSession } from "../lib/host.ts";
+import {
+  createTelegramBusFollowerRegistry,
+  createTelegramBusForeignOwnedUpdateForwarder,
+  createTelegramBusLocalServer,
+} from "../lib/bus.ts";
+import { createTelegramBusLeaderEnvelopeHandler } from "../lib/bus-leader.ts";
+import { createTelegramBusForwardedUpdateReceiverRuntime } from "../lib/bus-follower.ts";
+import { createTelegramSessionReplacementRuntime } from "../lib/session-replacement.ts";
+
 type RuntimeTestHandler = (context: TestContext) => void | Promise<void>;
 type RuntimeTelegramExtension = (typeof import("../index.ts"))["default"];
 
@@ -64,6 +74,102 @@ async function waitForCondition(
   }
   throw new Error("Timed out waiting for condition");
 }
+
+test("Follower replacement starts only after leader persistence confirmation", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-telegram-persistence-order-"));
+  const leaderSocketPath = join(dir, "leader.sock");
+  const followerSocketPath = join(dir, "follower.sock");
+  const events: string[] = [];
+  let providerStarted = false;
+  let persistenceConfirmationSent = false;
+  const unregisterHost = registerTelegramHostNewSession(async () => {
+    assert.equal(persistenceConfirmationSent, true);
+    providerStarted = true;
+    events.push("provider-started");
+    return { cancelled: false };
+  });
+  const replacement = createTelegramSessionReplacementRuntime({
+    sendTargetText: async () => undefined,
+    createRequestId: () => "telegram-new:test",
+    getNowMs: () => 1,
+  });
+  const receiver = createTelegramBusForwardedUpdateReceiverRuntime({
+    socketPath: followerSocketPath,
+    instanceId: "follower",
+    getAuthSecret: () => "secret",
+    getContext: () => ({ cwd: "/repo" }),
+    handleForwardedCallback: async () => undefined,
+    handleForwardedReaction: async () => undefined,
+    async handleForwardedMessage(message: { text?: string }) {
+      events.push(`follower-handled:${message.text ?? ""}`);
+      assert.deepEqual(
+        replacement.request({ chatId: 7, threadId: 42 }),
+        { accepted: true },
+      );
+    },
+    afterForwardedUpdatesPersisted() {
+      events.push("persistence-confirmation-received");
+      replacement.flushAfterUpdatePersisted();
+    },
+  });
+  const followerRegistry = createTelegramBusFollowerRegistry();
+  followerRegistry.register({
+    instanceId: "follower",
+    busSocketPath: followerSocketPath,
+    connectedAtMs: 1,
+  });
+  const leader = createTelegramBusLocalServer({
+    socketPath: leaderSocketPath,
+    handleEnvelope: createTelegramBusLeaderEnvelopeHandler({
+      followerRegistry,
+      authSecret: "secret",
+    }),
+  });
+  const forwarder = createTelegramBusForeignOwnedUpdateForwarder({
+    socketPath: leaderSocketPath,
+    createRequestId: (() => {
+      let sequence = 0;
+      return () => `leader:${++sequence}`;
+    })(),
+    getAuthSecret: () => "secret",
+  });
+  try {
+    await receiver.start();
+    await leader.start();
+    assert.equal(
+      await forwarder.forwardMessage({
+        message: { text: "/new" },
+        ownership: { instanceId: "follower" },
+        ctx: {},
+      }),
+      true,
+    );
+    events.push("forward-ack");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(providerStarted, false);
+
+    events.push("leader-offset-persisted");
+    persistenceConfirmationSent = true;
+    assert.equal(await forwarder.confirmForwardedUpdatesPersisted(), true);
+    events.push("persistence-confirmation-ack");
+    await waitForCondition(() => providerStarted);
+    const confirmationIndex = events.indexOf(
+      "persistence-confirmation-received",
+    );
+    const providerIndex = events.indexOf("provider-started");
+    assert.equal(providerStarted, true);
+    assert.equal(confirmationIndex >= 0, true);
+    assert.equal(providerIndex > confirmationIndex, true);
+    assert.equal(events.includes("follower-handled:/new"), true);
+    assert.equal(events.includes("forward-ack"), true);
+    assert.equal(events.includes("leader-offset-persisted"), true);
+  } finally {
+    unregisterHost();
+    await leader.stop();
+    await receiver.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 function parseJsonRequestBody(
   init: RequestInit | undefined,

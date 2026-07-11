@@ -284,6 +284,12 @@ export type TelegramBusEnvelope = (
       sentAtMs: number;
     }
   | {
+      kind: "leader.forwardedUpdatesPersisted";
+      requestId: string;
+      recipientInstanceId: string;
+      sentAtMs: number;
+    }
+  | {
       kind: "leader.replaceFollowerTarget";
       requestId: string;
       recipientInstanceId: string;
@@ -365,6 +371,9 @@ export function parseTelegramBusEnvelope(
         "leader.forwardEditedMessage",
       );
       break;
+    case "leader.forwardedUpdatesPersisted":
+      envelope = parseForwardedUpdatesPersistedEnvelope(value, requestId);
+      break;
     case "leader.replaceFollowerTarget":
       envelope = parseReplaceFollowerTargetEnvelope(value, requestId);
       break;
@@ -419,6 +428,11 @@ export interface TelegramBusForeignOwnedForwarderDeps {
   getNowMs?: () => number;
   timeoutMs?: number;
   getAuthSecret?: () => string | undefined;
+  recordRuntimeEvent?: (
+    category: string,
+    error: unknown,
+    details?: Record<string, unknown>,
+  ) => void;
 }
 
 export function createTelegramBusForeignOwnedUpdateForwarder<
@@ -449,8 +463,11 @@ export function createTelegramBusForeignOwnedUpdateForwarder<
     ownership: { instanceId: string };
     ctx: TContext;
   }) => Promise<boolean>;
+  confirmForwardedUpdatesPersisted: () => Promise<boolean>;
 } {
   const getNowMs = deps.getNowMs ?? Date.now;
+  const pendingRecipients = new Set<string>();
+  let confirmationPromise: Promise<boolean> | undefined;
   const send = async (envelope: TelegramBusEnvelope): Promise<boolean> => {
     if (deps.getAuthSecret) envelope.auth = deps.getAuthSecret();
     const socketPath = resolveTelegramBusSocketPath(deps.socketPath);
@@ -465,39 +482,99 @@ export function createTelegramBusForeignOwnedUpdateForwarder<
     });
     return response?.kind === "bus.ack" && response.ok;
   };
+  const forward = async (
+    envelope: TelegramBusEnvelope,
+    recipientInstanceId: string,
+  ): Promise<boolean> => {
+    const forwarded = await send(envelope);
+    if (forwarded) pendingRecipients.add(recipientInstanceId);
+    return forwarded;
+  };
+  const confirmForwardedUpdatesPersisted = (): Promise<boolean> => {
+    if (confirmationPromise) return confirmationPromise;
+    confirmationPromise = (async () => {
+      let confirmed = true;
+      for (const recipientInstanceId of [...pendingRecipients]) {
+        const envelope: TelegramBusEnvelope = {
+          kind: "leader.forwardedUpdatesPersisted",
+          requestId: deps.createRequestId(),
+          recipientInstanceId,
+          sentAtMs: getNowMs(),
+        };
+        try {
+          if (await send(envelope)) {
+            pendingRecipients.delete(recipientInstanceId);
+          } else {
+            confirmed = false;
+            deps.recordRuntimeEvent?.(
+              "bus",
+              new Error("Telegram bus persistence confirmation was rejected."),
+              {
+                phase: "leader-forwarded-updates-persisted",
+                recipientInstanceId,
+              },
+            );
+          }
+        } catch (error) {
+          confirmed = false;
+          deps.recordRuntimeEvent?.("bus", error, {
+            phase: "leader-forwarded-updates-persisted",
+            recipientInstanceId,
+          });
+        }
+      }
+      return confirmed;
+    })().finally(() => {
+      confirmationPromise = undefined;
+    });
+    return confirmationPromise;
+  };
   return {
     forwardCallback: ({ query, ownership }) =>
-      send({
-        kind: "leader.forwardCallback",
-        requestId: deps.createRequestId(),
-        recipientInstanceId: ownership.instanceId,
-        query,
-        sentAtMs: getNowMs(),
-      }),
+      forward(
+        {
+          kind: "leader.forwardCallback",
+          requestId: deps.createRequestId(),
+          recipientInstanceId: ownership.instanceId,
+          query,
+          sentAtMs: getNowMs(),
+        },
+        ownership.instanceId,
+      ),
     forwardReaction: ({ reactionUpdate, ownership }) =>
-      send({
-        kind: "leader.forwardReaction",
-        requestId: deps.createRequestId(),
-        recipientInstanceId: ownership.instanceId,
-        reactionUpdate,
-        sentAtMs: getNowMs(),
-      }),
+      forward(
+        {
+          kind: "leader.forwardReaction",
+          requestId: deps.createRequestId(),
+          recipientInstanceId: ownership.instanceId,
+          reactionUpdate,
+          sentAtMs: getNowMs(),
+        },
+        ownership.instanceId,
+      ),
     forwardMessage: ({ message, ownership }) =>
-      send({
-        kind: "leader.forwardMessage",
-        requestId: deps.createRequestId(),
-        recipientInstanceId: ownership.instanceId,
-        message,
-        sentAtMs: getNowMs(),
-      }),
+      forward(
+        {
+          kind: "leader.forwardMessage",
+          requestId: deps.createRequestId(),
+          recipientInstanceId: ownership.instanceId,
+          message,
+          sentAtMs: getNowMs(),
+        },
+        ownership.instanceId,
+      ),
     forwardEditedMessage: ({ message, ownership }) =>
-      send({
-        kind: "leader.forwardEditedMessage",
-        requestId: deps.createRequestId(),
-        recipientInstanceId: ownership.instanceId,
-        message,
-        sentAtMs: getNowMs(),
-      }),
+      forward(
+        {
+          kind: "leader.forwardEditedMessage",
+          requestId: deps.createRequestId(),
+          recipientInstanceId: ownership.instanceId,
+          message,
+          sentAtMs: getNowMs(),
+        },
+        ownership.instanceId,
+      ),
+    confirmForwardedUpdatesPersisted,
   };
 }
 
@@ -1030,6 +1107,21 @@ function parseForwardMessageEnvelope(
         requestId,
         recipientInstanceId: value.recipientInstanceId,
         message: value.message,
+        sentAtMs: value.sentAtMs,
+      }
+    : undefined;
+}
+
+function parseForwardedUpdatesPersistedEnvelope(
+  value: Record<string, unknown>,
+  requestId: string,
+): TelegramBusEnvelope | undefined {
+  return typeof value.recipientInstanceId === "string" &&
+    typeof value.sentAtMs === "number"
+    ? {
+        kind: "leader.forwardedUpdatesPersisted",
+        requestId,
+        recipientInstanceId: value.recipientInstanceId,
         sentAtMs: value.sentAtMs,
       }
     : undefined;

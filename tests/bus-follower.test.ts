@@ -131,8 +131,8 @@ test("Bus follower receiver handles leader-forwarded updates and target replacem
     handleReplaceTarget(input, ctx) {
       received.push({ kind: "replace-target", input, ctx });
     },
-    afterForwardedUpdateHandled() {
-      if (messageHandled) forwardedEvents.push("after-handler");
+    afterForwardedUpdatesPersisted() {
+      if (messageHandled) forwardedEvents.push("after-persisted");
     },
   });
   const leader = createTelegramBusLocalServer({
@@ -186,7 +186,7 @@ test("Bus follower receiver handles leader-forwarded updates and target replacem
     });
     assert.equal(registry.get("inst-b")?.lastHeartbeatMs, 4000);
     await new Promise<void>((resolve) => setTimeout(resolve, 5));
-    assert.deepEqual(forwardedEvents, ["message-handler", "after-handler"]);
+    assert.deepEqual(forwardedEvents, ["message-handler"]);
     nowMs = 5000;
     const editedMessageResponse = await sendTelegramBusLocalEnvelope({
       socketPath: leaderSocketPath,
@@ -198,9 +198,20 @@ test("Bus follower receiver handles leader-forwarded updates and target replacem
         sentAtMs: 5000,
       },
     });
+    const persistedResponse = await sendTelegramBusLocalEnvelope({
+      socketPath: leaderSocketPath,
+      envelope: {
+        kind: "leader.forwardedUpdatesPersisted",
+        requestId: "leader:5",
+        recipientInstanceId: "inst-b",
+        sentAtMs: 5000,
+      },
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(forwardedEvents, ["message-handler", "after-persisted"]);
     const targetController = createTelegramBusFollowerTargetController({
       socketPath: followerSocketPath,
-      createRequestId: () => "leader:5",
+      createRequestId: () => "leader:6",
       getNowMs: () => 6000,
     });
     const replaceTargetResponse = await targetController.replaceTarget({
@@ -233,6 +244,8 @@ test("Bus follower receiver handles leader-forwarded updates and target replacem
       ok: true,
       message: undefined,
     });
+    assert.equal(persistedResponse?.kind, "bus.ack");
+    assert.equal(persistedResponse?.ok, true);
     assert.equal(replaceTargetResponse, true);
     assert.equal(registry.get("inst-b")?.lastHeartbeatMs, 5000);
     assert.deepEqual(received, [
@@ -1136,7 +1149,7 @@ test("Bus follower defers replacement flush until concurrent forwarded handlers 
         secondHandled();
       }
     },
-    afterForwardedUpdateHandled() {
+    afterForwardedUpdatesPersisted() {
       flushes += 1;
     },
   });
@@ -1170,6 +1183,20 @@ test("Bus follower defers replacement flush until concurrent forwarded handlers 
 
     releaseFirst();
     await Promise.all([firstResponse, secondResponse]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.equal(flushes, 0);
+
+    const confirmationResponse = await sendTelegramBusLocalEnvelope({
+      socketPath,
+      envelope: {
+        kind: "leader.forwardedUpdatesPersisted",
+        requestId: "leader:concurrent-persisted",
+        recipientInstanceId: "inst-b",
+        sentAtMs: 3,
+      },
+    });
+    assert.equal(confirmationResponse?.kind, "bus.ack");
+    assert.equal(confirmationResponse?.ok, true);
     await new Promise<void>((resolve) => setTimeout(resolve, 5));
     assert.equal(flushes, 1);
   } finally {

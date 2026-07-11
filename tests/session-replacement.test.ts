@@ -85,7 +85,7 @@ test("session replacement rechecks readiness after concurrent inbound work", asy
   });
   blockingReason = "Cannot start a new session while the Telegram queue is non-empty.";
 
-  runtime.flushAfterInboundHandler();
+  runtime.flushAfterUpdatePersisted();
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(providerCalls, 0);

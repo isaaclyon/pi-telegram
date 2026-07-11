@@ -85,6 +85,8 @@ locks.json / @llblab/pi-telegram -> bus leader identity + heartbeat
 
 Followers do not poll. They register with the leader and receive routed inbound updates from it. Followers still own their local queue, active-turn state, previews, final delivery planning, model switches, and Pi lifecycle. The leader owns only Telegram transport and update fanout. Pi session replacement (`new`) changes follower agent context, not bus membership: a registered follower preserves its registration and refreshes the live context instead of disconnecting. The Telegram bus belongs to the local set of cooperating visible Pi instances rather than to the first terminal session forever: if the visible terminal leader exits, a live registered follower can take over leadership.
 
+Forwarded updates are acknowledged independently from offset persistence. After the leader persists the polling offset, it sends the authenticated `leader.forwardedUpdatesPersisted` envelope to each follower that successfully acknowledged a forwarded update. The follower defers its replacement flush until that confirmation handler has unwound; forwarding failures are never confirmed.
+
 ## Target Abstraction
 
 The bridge uses a first-class target abstraction:

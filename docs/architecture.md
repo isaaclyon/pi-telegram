@@ -151,7 +151,7 @@ All inbound updates are gated by the configured authorized user id.
 ### Inbound Turn Flow
 
 1. Poll updates through `getUpdates`.
-2. Persist update offsets only after successful handling; repeated handler failures are bounded. Deferred `/new` replacement is flushed only after this persistence completes for a polling owner; follower replacement is flushed only after its forwarded handler returns.
+2. Persist update offsets only after successful handling; repeated handler failures are bounded. Deferred `/new` replacement is flushed only after this persistence completes for a polling owner; for a follower, the leader sends an authenticated `leader.forwardedUpdatesPersisted` confirmation only after offset persistence, and the follower flushes after that envelope unwinds.
 3. Filter to the paired private user; guest-mode updates require an existing paired user and cannot establish first pairing.
 4. Dispatch owned callbacks and controls before fallback prompt forwarding.
 5. Coalesce media groups and likely split long text when needed.

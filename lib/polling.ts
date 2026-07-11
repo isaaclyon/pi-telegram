@@ -773,7 +773,7 @@ export interface TelegramPollLoopDeps<
   ) => Promise<TUpdate[]>;
   persistConfig: () => Promise<void>;
   handleUpdate: (update: TUpdate, ctx: TContext) => Promise<void>;
-  afterUpdatePersisted?: () => boolean | void;
+  afterUpdatePersisted?: () => MaybePromise<boolean | void>;
   onErrorStatus: (message: string) => void;
   onStatusReset: () => void;
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -792,7 +792,7 @@ export interface TelegramPollLoopRunnerDeps<
   ) => Promise<TUpdate[]>;
   persistConfig: () => Promise<void>;
   handleUpdate: (update: TUpdate, ctx: TContext) => Promise<void>;
-  afterUpdatePersisted?: () => boolean | void;
+  afterUpdatePersisted?: () => MaybePromise<boolean | void>;
   updateStatus: (ctx: TContext, message?: string) => void;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   maxUpdateFailures?: number;
@@ -912,7 +912,7 @@ export async function runTelegramPollLoop<
           deps.config.lastUpdateId = update.update_id;
           updateFailures.delete(update.update_id);
           await deps.persistConfig();
-          if (deps.afterUpdatePersisted?.() === true) return;
+          if ((await deps.afterUpdatePersisted?.()) === true) return;
         } catch (error) {
           const failureCount = (updateFailures.get(update.update_id) ?? 0) + 1;
           updateFailures.set(update.update_id, failureCount);
@@ -932,7 +932,7 @@ export async function runTelegramPollLoop<
           deps.config.lastUpdateId = update.update_id;
           updateFailures.delete(update.update_id);
           await deps.persistConfig();
-          if (deps.afterUpdatePersisted?.() === true) return;
+          if ((await deps.afterUpdatePersisted?.()) === true) return;
         }
       }
     } catch (error) {

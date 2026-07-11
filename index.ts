@@ -712,6 +712,7 @@ export default function (pi: Pi.ExtensionAPI) {
         return telegramBusAuthSecret;
       },
       timeoutMs: 30_000,
+      recordRuntimeEvent,
     });
   const followerTargetController =
     Bus.createTelegramBusFollowerTargetController({
@@ -908,7 +909,8 @@ export default function (pi: Pi.ExtensionAPI) {
             ctx,
           );
         },
-        afterForwardedUpdateHandled: sessionReplacementRuntime.flushAfterInboundHandler,
+        afterForwardedUpdatesPersisted:
+          sessionReplacementRuntime.flushAfterUpdatePersisted,
         recordRuntimeEvent,
       },
       targetReplacement: {
@@ -981,7 +983,19 @@ export default function (pi: Pi.ExtensionAPI) {
     handleUpdate: Updates.createTelegramUpdateHandle({
       defaultHandle: inboundRouteRuntime.handleUpdate,
     }),
-    afterUpdatePersisted: sessionReplacementRuntime.flushAfterUpdatePersisted,
+    async afterUpdatePersisted() {
+      try {
+        if (!(await foreignOwnedUpdateForwarder.confirmForwardedUpdatesPersisted())) {
+          return false;
+        }
+      } catch (error) {
+        recordRuntimeEvent("bus", error, {
+          phase: "leader-forwarded-updates-persisted",
+        });
+        return false;
+      }
+      return sessionReplacementRuntime.flushAfterUpdatePersisted();
+    },
     stopTypingLoop: typing.stop,
     updateStatus,
     recordRuntimeEvent,

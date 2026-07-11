@@ -77,7 +77,6 @@ export interface TelegramSessionReplacementRuntime {
     target: TelegramTarget,
   ) => TelegramSessionReplacementRequestResult;
   flushAfterUpdatePersisted: () => boolean;
-  flushAfterInboundHandler: () => void;
   onSessionStart: () => Promise<void>;
 }
 
@@ -203,9 +202,6 @@ export function createTelegramSessionReplacementRuntime(deps: {
       if (tasks.length === 0) return false;
       setImmediate(() => runDeferred(tasks));
       return true;
-    },
-    flushAfterInboundHandler() {
-      runDeferred(takeDeferred());
     },
     async onSessionStart() {
       const handoff = getFreshHandoff(getNowMs());
