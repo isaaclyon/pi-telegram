@@ -8,7 +8,7 @@
 
 It is a **runtime adapter**, not a remote terminal. Start or supervise work in the Pi TUI, then continue from Telegram while away from the keyboard. The bridge preserves Pi session semantics instead of pretending Telegram is a PTY, shell, or process launcher. That boundary is the product: Telegram gets safe runtime handles, not raw terminal power.
 
-This repository is an actively maintained fork of [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram). It started from upstream commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc) and has since diverged substantially.
+This repository is a host-integration fork of [`llblab/pi-telegram`](https://github.com/llblab/pi-telegram), itself derived from `badlogic/pi-telegram`. The `host-session-new` branch stays close to llblab releases while adding the narrow host capability required for same-thread Telegram `/new`.
 
 ## Install
 
@@ -18,10 +18,16 @@ From npm:
 pi install npm:@llblab/pi-telegram
 ```
 
-From git:
+From the llblab git repository:
 
 ```bash
 pi install git:github.com/llblab/pi-telegram
+```
+
+For the host-backed `/new` capability, install the reviewed fork commit exactly rather than a floating branch:
+
+```bash
+pi install git:github.com/isaaclyon/pi-telegram#8cd47ab31a6e41c748acfa773b020cde1768339e
 ```
 
 ## Quick Start
