@@ -239,6 +239,7 @@ Assistant delivery guarantees:
 - Long native Markdown replies are split only at Telegram Rich Message transport limits; oversized fenced code, display-math, and fully wrapped inline-formatting blocks are rewrapped per chunk so persisted Rich Markdown chunks remain structurally valid.
 - When Draft previews are enabled, streaming previews pass structurally closed assistant Markdown prefixes through to `sendRichMessageDraft` with ownership checks, voice suppression, and serialized flushes. Unclosed inline spans, links, fenced code, comments, and display-math blocks are held back until a safe boundary exists. Draft failures are recorded and the failing frame is skipped instead of degrading to raw plain-message previews, because partial Markdown can be invalid while the final message remains valid.
 - Preview flushes are serialized so older edits cannot race newer drafts; final delivery waits for active draft flushes and does not perform a post-final draft-clear call.
+- When `assistant.toolActivity` is enabled (default), the first `tool_execution_start` of an owned Telegram turn posts one quiet HTML status message that is edited in place as tools progress (last six tool lines with compact argument hints plus a tool-count/elapsed footer). Edits are single-flight with a 2s minimum interval, unchanged text skips the API call, guest queries and unowned turns are excluded, delivery errors quiesce the message for the rest of the turn, and `agent_end` deletes it before the final reply is delivered.
 
 UI/compat rendering guarantees:
 

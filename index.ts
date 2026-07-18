@@ -43,6 +43,7 @@ import * as TelegramApi from "./lib/telegram-api.ts";
 import * as TextGroups from "./lib/text-groups.ts";
 import * as ThreadReconciler from "./lib/thread-reconciler.ts";
 import * as TimeInjection from "./lib/time-injection.ts";
+import * as ToolActivity from "./lib/tool-activity.ts";
 import * as Updates from "./lib/updates.ts";
 import * as Voice from "./lib/voice.ts";
 
@@ -611,6 +612,18 @@ export default function (pi: Pi.ExtensionAPI) {
       getHandlers: configStore.getOutboundHandlers,
       recordRuntimeEvent,
     });
+  const toolActivityRuntime = ToolActivity.createTelegramToolActivityRuntime({
+    isEnabled: configControls.isToolActivityEnabled,
+    getActiveTurn: activeTurnRuntime.get,
+    sendMessage,
+    editMessageText: editTelegramMessageText,
+    deleteMessage: deleteTelegramMessage,
+    getCwd() {
+      const ctx = telegramSessionContextStore.get();
+      return ctx ? Pi.getExtensionContextCwd(ctx) : undefined;
+    },
+    recordRuntimeEvent,
+  });
 
   // --- Model And Menu Setup ---
 
@@ -1372,6 +1385,7 @@ export default function (pi: Pi.ExtensionAPI) {
     telegramQueueStore,
     modelSwitchController,
     previewRuntime,
+    toolActivityRuntime,
     promptDispatchRuntime,
     deferredQueueDispatchRuntime,
     lockOwnershipGuard,

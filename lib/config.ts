@@ -54,6 +54,8 @@ export interface TelegramConfig {
   assistant?: {
     draftPreviews?: boolean;
     rendering?: TelegramAssistantRenderingMode;
+    /** Live tool-activity status message while the agent runs tools (default on) */
+    toolActivity?: boolean;
   };
   /** @deprecated use assistant.draftPreviews */
   draftPreviews?: boolean;
@@ -445,6 +447,27 @@ export function createTelegramDraftPreviewsSetter(
   };
 }
 
+export function createTelegramToolActivityChecker(
+  configStore: Pick<TelegramConfigStore, "get">,
+): () => boolean {
+  return () => configStore.get().assistant?.toolActivity ?? true;
+}
+
+export function createTelegramToolActivitySetter(
+  configStore: TelegramMutableConfigStore,
+): (enabled: boolean) => Promise<void> {
+  return async (enabled) => {
+    await loadLatestTelegramConfig(configStore);
+    const current = configStore.get();
+    const config = {
+      ...current,
+      assistant: { ...current.assistant, toolActivity: enabled },
+    };
+    configStore.set(config);
+    await configStore.persist(config);
+  };
+}
+
 export function createTelegramAssistantRenderingModeGetter(
   configStore: Pick<TelegramConfigStore, "get">,
 ): () => TelegramAssistantRenderingMode {
@@ -608,6 +631,8 @@ export function createTelegramConfigControls(
     setProactivePushEnabled: createTelegramProactivePushSetter(configStore),
     areDraftPreviewsEnabled: createTelegramDraftPreviewsChecker(configStore),
     setDraftPreviewsEnabled: createTelegramDraftPreviewsSetter(configStore),
+    isToolActivityEnabled: createTelegramToolActivityChecker(configStore),
+    setToolActivityEnabled: createTelegramToolActivitySetter(configStore),
     getAssistantRenderingMode:
       createTelegramAssistantRenderingModeGetter(configStore),
     setAssistantRenderingMode:

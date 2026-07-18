@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased: Tool Activity Status Message
+
+- `[Tool Activity]` While the agent runs tools, the bridge now posts one quiet (`disable_notification`) status message on the first `tool_execution_start` and edits it in place as tools progress: the last six tool lines with compact argument hints (`▸ read lib/host.ts`, `⏳ bash: npm test`, `✗` on error) plus a `(N tools · 45s)` footer. Edits are single-flight and throttled to one per 2s to respect Telegram's per-chat edit limits, and the message is deleted at `agent_end` before the final reply is delivered. Impact: long tool-heavy turns are no longer silent between the user's prompt and the final answer, and chat history stays clean afterward.
+- `[Configuration]` Added `assistant.toolActivity` to `telegram.json` (default on); set it to `false` to restore the previous typing-indicator-only behavior. Guest Mode queries and turns without an owned Telegram chat never receive a status message.
+- `[Validation]` Added tool-activity regressions for label/hint formatting, HTML escaping, the six-line window, throttled edit coalescing, unchanged-text skips, deletion ordering against in-flight sends, API-error quiescence, disabled/guest/no-turn gating, and lifecycle binding delegation.
+
 ## Unreleased: Telegram `/new` Hardening
 
 - `[Fresh Sessions]` Added the guarded Telegram `/new` command, which consumes the command, preserves the exact `{ chatId, threadId? }` target, and delegates only through the optional narrow host capability for Pi's official session-replacement path. The command reports unavailable hosts and rejects busy, queued, compacting, or duplicate-replacement sessions.

@@ -283,6 +283,13 @@ test("Lifecycle binding delegates shutdown to composed session runtime", async (
       onMessageStart: async () => {},
       onMessageUpdate: async () => {},
     },
+    toolActivityRuntime: {
+      onAgentStart: () => {},
+      onToolExecutionStart: () => {},
+      onToolExecutionEnd: () => {},
+      finish: async () => {},
+      discard: () => {},
+    },
     promptDispatchRuntime: {
       startTypingLoop: () => events.push("typing:start"),
     },
@@ -360,6 +367,14 @@ test("Lifecycle binding uses native typing and assistant previews without activi
       setPendingText: () => {},
       onMessageStart: async () => events.push("preview:start"),
       onMessageUpdate: async () => events.push("preview:update"),
+    },
+    toolActivityRuntime: {
+      onAgentStart: () => {},
+      onToolExecutionStart: (event: { toolName: string }) =>
+        events.push(`tool-activity:start:${event.toolName}`),
+      onToolExecutionEnd: () => {},
+      finish: async () => {},
+      discard: () => {},
     },
     promptDispatchRuntime: {
       startTypingLoop: (
@@ -451,6 +466,7 @@ test("Lifecycle binding uses native typing and assistant previews without activi
     "typing:42:9",
     "preview:update",
     "typing:42:9",
+    "tool-activity:start:read",
     "typing:42:9",
     "typing:42:8",
   ]);
