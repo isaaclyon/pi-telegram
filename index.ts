@@ -15,6 +15,7 @@ import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
 import * as Threads from "./lib/threads.ts";
 import * as Inbound from "./lib/inbound.ts";
+import * as Inbox from "./lib/inbox.ts";
 import * as Lifecycle from "./lib/lifecycle.ts";
 import * as Locks from "./lib/locks.ts";
 import * as Media from "./lib/media.ts";
@@ -222,8 +223,12 @@ export default function (pi: Pi.ExtensionAPI) {
     TelegramApi.TelegramMessage,
     Pi.ExtensionContext
   >();
-  const telegramQueueStore =
-    Queue.createTelegramQueueStore<Pi.ExtensionContext>();
+  // ADR-0003 (host): reconcile a host-provided durable inbox on every queue
+  // mutation so accepted turns survive a crash. No-op until a host registers one.
+  const telegramQueueStore = Inbox.withTelegramInboundInboxPersistence(
+    Queue.createTelegramQueueStore<Pi.ExtensionContext>(),
+  );
+  let telegramInboxReplayed = false;
   const deferredQueueDispatchRuntime =
     Queue.createTelegramDeferredQueueDispatchRuntime<Pi.ExtensionContext>({
       delayMs: 50,
@@ -1278,6 +1283,14 @@ export default function (pi: Pi.ExtensionAPI) {
     {
       async onSessionStart(event, ctx) {
         await lockedPollingRuntime.onSessionStart(event, ctx);
+        if (!telegramInboxReplayed) {
+          telegramInboxReplayed = true;
+          const replayed = Inbox.replayTelegramInboundInbox(
+            telegramQueueStore,
+            Inbox.getTelegramInboundInbox(),
+          );
+          if (replayed > 0) queueMutationRuntime.reorder(ctx);
+        }
         telegramThreadCapabilityMonitor.start(ctx);
         queueDispatchWatchdogRuntime.start(ctx);
       },
