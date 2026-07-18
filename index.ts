@@ -1221,6 +1221,11 @@ export default function (pi: Pi.ExtensionAPI) {
     registerFollowerWithOwner: threadAwarePollingPorts.registerFollowerWithOwner,
     stopFollowerRegistration: threadAwarePollingPorts.stopFollowerRegistration,
     updateStatus,
+    // Publish the command menu once this instance owns the bot, so `/`
+    // autocomplete (including /new) appears without a manual /help.
+    onPollingStarted: Commands.createTelegramBotCommandRegistrar({
+      setMyCommands,
+    }),
     recordRuntimeEvent,
   });
   const disconnectTelegramAndDeleteCurrentThread =
