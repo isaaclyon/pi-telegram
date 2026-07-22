@@ -493,7 +493,6 @@ export default function (pi: Pi.ExtensionAPI) {
     deleteMessage: deleteTelegramMessage,
     prepareTempDir,
   } = telegramApiRuntime;
-
   // --- Message Delivery ---
 
   const sendGuestReply = Replies.createGuestMarkdownReplySender({
@@ -864,6 +863,7 @@ export default function (pi: Pi.ExtensionAPI) {
     answerGuestQuery,
     sendTextReply,
     setMyCommands,
+    getBotCommandScope: Host.getTelegramHostHouseholdCommandScope,
     getCommands,
     downloadFile: downloadTelegramBridgeFile,
     resolveTimeLine: timeInjectionRuntime.resolveLine,
@@ -1240,6 +1240,7 @@ export default function (pi: Pi.ExtensionAPI) {
     // autocomplete (including /new) appears without a manual /help.
     onPollingStarted: Commands.createTelegramBotCommandRegistrar({
       setMyCommands,
+      getScope: Host.getTelegramHostHouseholdCommandScope,
     }),
     recordRuntimeEvent,
   });

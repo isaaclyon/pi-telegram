@@ -23,6 +23,11 @@ export interface TelegramBotCommandDefinition {
   description: string;
 }
 
+export interface TelegramBotCommandScopeChat {
+  type: "chat";
+  chat_id: number;
+}
+
 export interface TelegramPromptTemplateMenuCommand {
   command: string;
   description?: string;
@@ -256,25 +261,30 @@ export function getTelegramReservedCommandNames(): string[] {
 export interface TelegramBotCommandRegistrationDeps {
   setMyCommands: (
     commands: readonly TelegramBotCommandDefinition[],
+    scope?: TelegramBotCommandScopeChat,
   ) => Promise<unknown>;
+  getScope?: () => TelegramBotCommandScopeChat | undefined;
 }
 
 export async function registerTelegramBotCommands(
   deps: TelegramBotCommandRegistrationDeps,
 ): Promise<void> {
+  const scope = deps.getScope?.();
+  const publish = (commands: readonly TelegramBotCommandDefinition[]) =>
+    deps.setMyCommands(commands, scope);
   const extensionCommands = getVisibleTelegramExtensionBotCommands();
   if (extensionCommands.length === 0) {
-    await deps.setMyCommands(TELEGRAM_BOT_COMMANDS);
+    await publish(TELEGRAM_BOT_COMMANDS);
     return;
   }
   const compactCommandIndex = TELEGRAM_BOT_COMMANDS.findIndex(
     (command) => command.command === "compact",
   );
   if (compactCommandIndex === -1) {
-    await deps.setMyCommands([...TELEGRAM_BOT_COMMANDS, ...extensionCommands]);
+    await publish([...TELEGRAM_BOT_COMMANDS, ...extensionCommands]);
     return;
   }
-  await deps.setMyCommands([
+  await publish([
     ...TELEGRAM_BOT_COMMANDS.slice(0, compactCommandIndex + 1),
     ...extensionCommands,
     ...TELEGRAM_BOT_COMMANDS.slice(compactCommandIndex + 1),
@@ -1625,6 +1635,7 @@ export function createTelegramCommandHandlerTargetRuntime<
     setAllowedUserId: deps.setAllowedUserId,
     registerBotCommands: createTelegramBotCommandRegistrar({
       setMyCommands: deps.setMyCommands,
+      getScope: deps.getScope,
     }),
     persistConfig: deps.persistConfig,
     sendTextReply: commandTargetRuntime.sendTextReply,

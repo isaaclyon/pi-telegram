@@ -21,6 +21,11 @@ export interface TelegramHostHouseholdGroup {
   actors: readonly TelegramHostHouseholdActor[];
 }
 
+export interface TelegramHostHouseholdCommandScope {
+  type: "chat";
+  chat_id: number;
+}
+
 interface TelegramHostRegistry {
   readonly version: 1;
   provider?: TelegramHostNewSession;
@@ -182,6 +187,15 @@ export function getTelegramHostHouseholdGroup():
   | TelegramHostHouseholdGroup
   | undefined {
   return getTelegramHostRegistry().householdGroup;
+}
+
+export function getTelegramHostHouseholdCommandScope():
+  | TelegramHostHouseholdCommandScope
+  | undefined {
+  const householdGroup = getTelegramHostHouseholdGroup();
+  return householdGroup
+    ? { type: "chat", chat_id: householdGroup.chatId }
+    : undefined;
 }
 
 export function getTelegramHostHouseholdActorLabel(
