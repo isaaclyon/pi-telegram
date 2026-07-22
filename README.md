@@ -4,11 +4,11 @@
 
 **A Telegram companion hub for live Pi sessions.**
 
-`pi-telegram` turns a private Telegram DM into a mobile operator surface for Pi. It accepts prompts, queues work, streams readable previews, delivers final replies and files, exposes safe controls, and lets companion extensions add Telegram-native capabilities without owning a second bot loop.
+`pi-telegram` turns a private Telegram DM—or an explicitly host-authorized household group—into a mobile operator surface for Pi. It accepts prompts, queues work, streams readable previews, delivers final replies and files, exposes safe controls, and lets companion extensions add Telegram-native capabilities without owning a second bot loop.
 
 It is a **runtime adapter**, not a remote terminal. Start or supervise work in the Pi TUI, then continue from Telegram while away from the keyboard. The bridge preserves Pi session semantics instead of pretending Telegram is a PTY, shell, or process launcher. That boundary is the product: Telegram gets safe runtime handles, not raw terminal power.
 
-This repository is a host-integration fork of [`llblab/pi-telegram`](https://github.com/llblab/pi-telegram), itself derived from `badlogic/pi-telegram`. The `host-session-new` branch stays close to llblab releases while adding the narrow host capability required for same-thread Telegram `/new`.
+This repository is a host-integration fork of [`llblab/pi-telegram`](https://github.com/llblab/pi-telegram), itself derived from `badlogic/pi-telegram`. It stays close to llblab releases while adding narrow host capabilities for same-target Telegram `/new` and one fail-closed household group surface.
 
 ## Install
 
@@ -27,7 +27,7 @@ pi install git:github.com/llblab/pi-telegram
 For the host-backed `/new` capability, install the reviewed fork commit exactly rather than a floating branch:
 
 ```bash
-pi install git:github.com/isaaclyon/pi-telegram#3f2ed12ebb8e9533f2c46b9b38a707e6ba1c8246
+pi install git:github.com/isaaclyon/pi-telegram#<reviewed-full-commit-sha>
 ```
 
 ## Quick Start
@@ -66,6 +66,20 @@ Open the bot DM and send:
 ```
 
 The first Telegram user to message the bot becomes the allowed owner. Other users are ignored.
+
+### Host-authorized household group
+
+A host may replace personal pairing with exactly one private Telegram group shared by exactly two allowlisted people. This is a host policy, not a `telegram.json` option: the host registers the exact negative group chat id, both numeric Telegram user ids, and stable prompt labels before the extension starts. In this mode the bridge:
+
+- admits only messages, edits, callbacks, and reactions whose target and actor both match that policy;
+- rejects DMs, other groups or channels, bots, anonymous administrators, channel-authored updates, group migration events, and updates whose actor cannot be verified;
+- attributes accepted turns as `[telegram|actor:Isaac]` or `[telegram|actor:Emma]` using host-owned stable labels, never mutable Telegram names;
+- preserves the group target and actor identity through queue persistence, edits, media grouping, buttons, replay, and replies;
+- disables personal pairing, Guest Mode admission, and private-chat Threaded Mode for that bot runtime.
+
+Because both household actors share one Pi history, `/new` is confirmation-gated in this mode: the command posts an inline warning and only an authorized `Start shared session` callback requests replacement. Personal-DM `/new` remains immediate after its existing idle/queue safety checks.
+
+Create the shared bot with BotFather, add it to the intended private group, and decide whether it should receive ordinary messages. Telegram privacy mode enabled means the bot generally sees commands, mentions, and replies; use BotFather `/setprivacy` → **Disable** only if the household wants every ordinary group message to reach the bot. A basic group may migrate to a supergroup and receive a new chat id; the bridge deliberately fails closed after migration until the host policy is updated and the runtime is restarted. Tokens and numeric ids are never rendered in status output.
 
 ## What It Feels Like
 
@@ -216,7 +230,7 @@ Most controls live in Pi commands or the Telegram menu. Environment variables re
 | Inbound file limit | `PI_TELEGRAM_INBOUND_FILE_MAX_BYTES`, `TELEGRAM_MAX_FILE_SIZE_BYTES` |
 | Outbound attachment limit | `PI_TELEGRAM_OUTBOUND_ATTACHMENT_MAX_BYTES`, `TELEGRAM_MAX_ATTACHMENT_SIZE_BYTES` |
 
-Defaults are chosen for ordinary private-bot use: saved config in `~/.pi/agent`, inbound temp files in `~/.pi/agent/tmp/telegram`, `assistant: { rendering: "rich", draftPreviews: false }` for assistant answer output, and native Telegram active status for long-running turns.
+Defaults are chosen for ordinary private-bot use: saved config in `~/.pi/agent`, inbound temp files in `~/.pi/agent/tmp/telegram`, `assistant: { rendering: "rich", draftPreviews: false, toolActivity: true }` for assistant answer output, a transient in-place-edited tool-activity status message during tool-heavy turns (deleted when the final answer arrives; disable with `assistant.toolActivity: false`), and native Telegram active status for long-running turns.
 
 ## Extension Platform
 

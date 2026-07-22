@@ -9,7 +9,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import testRoot, { mock, type TestContext } from "node:test";
 
-import { registerTelegramHostNewSession } from "../lib/host.ts";
+import {
+  registerTelegramHostHouseholdGroup,
+  registerTelegramHostNewSession,
+} from "../lib/host.ts";
 import {
   createTelegramBusFollowerRegistry,
   createTelegramBusForeignOwnedUpdateForwarder,
@@ -463,6 +466,120 @@ test("Extension runtime polls, pairs, and dispatches an inbound Telegram turn in
     await handlers.get("session_shutdown")?.({}, ctx);
   } finally {
     restoreFetch();
+    await telegramConfig.restore();
+  }
+});
+
+test("Extension runtime admits only configured household group actors", async () => {
+  const telegramConfig = await createRuntimeTelegramConfigFixture();
+  const unregisterHousehold = registerTelegramHostHouseholdGroup({
+    kind: "household-group",
+    chatId: -100123,
+    actors: [
+      { userId: 101, label: "Isaac" },
+      { userId: 202, label: "Emma" },
+    ],
+  });
+  const sentMessages: RuntimeHarnessMessage[] = [];
+  let resolveDispatch: ((value: RuntimeHarnessMessage) => void) | undefined;
+  const dispatched = new Promise<RuntimeHarnessMessage>((resolve) => {
+    resolveDispatch = resolve;
+  });
+  const statusTexts: string[] = [];
+  const { handlers, commands, pi } = createRuntimePiHarness({
+    sendUserMessage: (content) => {
+      sentMessages.push(content);
+      resolveDispatch?.(content);
+    },
+  });
+  let getUpdatesCalls = 0;
+  const apiCalls: Array<{ method: string; body?: Record<string, unknown> }> = [];
+  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+    const method = getRuntimeTelegramApiMethod(input);
+    const body = parseJsonRequestBody(init);
+    apiCalls.push({ method, body });
+    if (method === "deleteWebhook") {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    if (method === "getUpdates") {
+      getUpdatesCalls += 1;
+      if (getUpdatesCalls === 1) {
+        return createRuntimeTelegramApiResponse([
+          {
+            update_id: 1,
+            message: {
+              message_id: 1,
+              chat: { id: 101, type: "private" },
+              from: { id: 101, is_bot: false },
+              text: "private should be ignored",
+            },
+          },
+          {
+            update_id: 2,
+            message: {
+              message_id: 2,
+              chat: { id: -100123, type: "supergroup" },
+              from: { id: 303, is_bot: false },
+              text: "outsider should be ignored",
+            },
+          },
+          {
+            update_id: 3,
+            message: {
+              message_id: 3,
+              chat: { id: -100123, type: "supergroup" },
+              from: { id: 202, is_bot: false },
+              text: "shared household request",
+            },
+          },
+        ]);
+      }
+      throw new DOMException("stop", "AbortError");
+    }
+    if (method === "sendChatAction") {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    throw new Error(`Unexpected Telegram API method: ${method}`);
+  });
+  try {
+    await telegramConfig.write({
+      botToken: "123:abc",
+      botUsername: "shared_bot",
+      lastUpdateId: 0,
+    });
+    await writeRuntimeTelegramLocks({});
+    (await getRuntimeTelegramExtension())(pi);
+    const ctx = createRuntimeExtensionContext({
+      cwd: process.cwd(),
+      ui: {
+        theme: {
+          fg: (_token: string, text: string) => text,
+        },
+        setStatus: (_key: string, text: string) => statusTexts.push(text),
+        notify: () => {},
+      },
+    });
+    await handlers.get("session_start")?.({}, ctx);
+    await commands.get("telegram-connect")?.handler("", ctx);
+    const dispatchedContent = await dispatched;
+    assert.equal(sentMessages.length, 1);
+    assert.equal(
+      getRuntimeHarnessMessageText(dispatchedContent),
+      "[telegram|actor:Emma] shared household request",
+    );
+    assert.equal(apiCalls.some((call) => call.method === "getMe"), false);
+    assert.equal(
+      apiCalls.some(
+        (call) =>
+          call.method === "sendChatAction" && call.body?.chat_id === -100123,
+      ),
+      true,
+    );
+    assert.equal(statusTexts.some((text) => text.includes("awaiting pairing")), false);
+    await handlers.get("session_shutdown")?.({}, ctx);
+  } finally {
+    restoreFetch();
+    unregisterHousehold();
     await telegramConfig.restore();
   }
 });

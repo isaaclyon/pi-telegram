@@ -134,6 +134,8 @@ This means:
 - Extensions can observe updates by always returning `"pass"`.
 - Extensions must not consume updates that belong to `pi-telegram`'s own prefixes (`compact:`, `tgbtn:`, `menu:`, `model:`, `thinking:`, `status:`, `queue:`, `settings:`, `section:`) unless they are deliberately replacing that behavior.
 
+When the trusted host registers a household-group policy, default pi-telegram routing subsequently requires the exact configured group target and one of the two configured actors. Unauthorized updates can still be observed by this deliberately low-level raw handler registry because handlers run before default routing; they never reach Pi or pi-telegram's durable inbox unless a trusted handler explicitly consumes and handles them itself. Household deployments should therefore load only reviewed repo-local update-handler extensions.
+
 ## Ownership semantics
 
 The handler registry is ownership-agnostic and does not interact with the `locks.json` singleton lock documented in [Locks](./locks.md). When the locked polling runtime stops `pi-telegram`'s `getUpdates` loop, for example after ownership is moved to another pi process, handlers stop receiving updates because no updates are being fetched. They are not unregistered.

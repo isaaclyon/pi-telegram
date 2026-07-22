@@ -415,6 +415,13 @@ export interface TelegramLockedPollingRuntimeDeps<
   ) => boolean | undefined | Promise<boolean | undefined>;
   stopFollowerRegistration?: () => void;
   updateStatus: (ctx: TContext) => void;
+  /**
+   * Best-effort hook fired after this instance successfully starts polling
+   * (explicit connect or session auto-start), i.e. once it owns the bot's
+   * direct API. Used to register the Telegram command menu so `/` autocomplete
+   * appears without a manual `/help`. Never blocks or fails the polling start.
+   */
+  onPollingStarted?: (ctx: TContext) => void | Promise<void>;
   recordRuntimeEvent?: (
     category: string,
     error: unknown,
@@ -485,6 +492,19 @@ export function createTelegramLockedPollingRuntime<
   const formatStartBlockedMessage = (ctx: TContext): string =>
     deps.formatStartBlockedMessage?.(ctx) ??
     "Telegram polling is unavailable in this Pi run mode.";
+  const notifyPollingStarted = (ctx: TContext): void => {
+    const hook = deps.onPollingStarted;
+    if (!hook) return;
+    void (async () => {
+      try {
+        await hook(ctx);
+      } catch (error) {
+        deps.recordRuntimeEvent?.("lock", error, {
+          phase: "polling-started-hook",
+        });
+      }
+    })();
+  };
   return {
     start: async (ctx, options = {}) => {
       if (!deps.hasBotToken()) {
@@ -534,6 +554,7 @@ export function createTelegramLockedPollingRuntime<
       }
       await deps.startPolling(ctx, options);
       startOwnershipWatcher(ctx);
+      notifyPollingStarted(ctx);
       deps.updateStatus(ctx);
       const staleSuffix = acquired.replacedStale ? " Replaced stale lock." : "";
       return { ok: true, message: `Telegram bridge connected.${staleSuffix}` };
@@ -575,6 +596,7 @@ export function createTelegramLockedPollingRuntime<
         await deps.startPolling(ctx);
         if (generation !== sessionAutoStartGeneration) return;
         startOwnershipWatcher(ctx);
+        notifyPollingStarted(ctx);
         deps.updateStatus(ctx);
         deps.recordRuntimeEvent?.("lock", "Telegram auto-start completed", {
           phase: "auto-start-complete",

@@ -38,8 +38,8 @@ function createDirectRuntime(calls: unknown[]): TelegramBridgeApiRuntime {
     },
     deleteWebhook: async () => true,
     getUpdates: async () => [],
-    setMyCommands: async (commands) => {
-      calls.push({ kind: "commands", commands });
+    setMyCommands: async (commands, scope) => {
+      calls.push({ kind: "commands", commands, scope });
       return true;
     },
     sendChatAction: async (chatId, action, options) => {
@@ -164,6 +164,13 @@ test("Bus-aware API runtime routes follower outbound calls through the leader", 
     await runtime.downloadFile("file1", "photo.png"),
     "/tmp/leader-photo.png",
   );
+  assert.equal(
+    await runtime.setMyCommands(
+      [{ command: "start", description: "Start" }],
+      { type: "chat", chat_id: -100123 },
+    ),
+    true,
+  );
 
   assert.deepEqual(directCalls, []);
   assert.deepEqual(busCalls, [
@@ -236,6 +243,16 @@ test("Bus-aware API runtime routes follower outbound calls through the leader", 
     {
       method: "downloadFile",
       args: ["file1", "photo.png"],
+    },
+    {
+      method: "call",
+      args: [
+        "setMyCommands",
+        {
+          commands: [{ command: "start", description: "Start" }],
+          scope: { type: "chat", chat_id: -100123 },
+        },
+      ],
     },
   ]);
 });

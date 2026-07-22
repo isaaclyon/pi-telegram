@@ -46,6 +46,7 @@
   ],
   "exports": {
     ".": "./index.ts",
+    "./inbox": "./api/inbox.ts",
     "./inbound": "./api/inbound.ts",
     "./outbound": "./api/outbound.ts",
     "./updates": "./api/updates.ts",

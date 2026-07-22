@@ -31,6 +31,7 @@ import {
   handleTelegramCompactConfirmationCallback,
   handleTelegramModelCommand,
   handleTelegramNewSessionCommand,
+  handleTelegramNewSessionConfirmationCallback,
   handleTelegramStatusCommand,
   handleTelegramStopCommand,
   parseTelegramCommand,
@@ -142,6 +143,75 @@ test("/new consumes the command, preserves its exact target, and acknowledges ac
   assert.deepEqual(replies, ["🆕 Starting a new session in this thread."]);
 });
 
+test("/new requires an explicit household confirmation before replacing shared history", async () => {
+  const replies: string[] = [];
+  const confirmations: Array<{ chatId: number; threadId?: number }> = [];
+  let requests = 0;
+  await handleTelegramNewSessionCommand(
+    { chat: { id: -100123 }, message_id: 9 },
+    {
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      hasActiveTelegramTurn: () => false,
+      hasDispatchPending: () => false,
+      hasQueuedTelegramItems: () => false,
+      isCompactionInProgress: () => false,
+      hasPendingSessionReplacement: () => false,
+      requestNewSession: () => {
+        requests += 1;
+        return { accepted: true };
+      },
+      getMessageTarget: getTelegramNewSessionMessageTarget,
+      requiresConfirmation: () => true,
+      sendConfirmation: async (target) => {
+        confirmations.push(target);
+      },
+      sendTextReply: async (text) => {
+        replies.push(text);
+      },
+    },
+  );
+  assert.equal(requests, 0);
+  assert.deepEqual(confirmations, [{ chatId: -100123, threadId: undefined }]);
+  assert.deepEqual(replies, []);
+});
+
+test("household /new confirmation requests replacement only after authorized callback", async () => {
+  const edits: string[] = [];
+  const answers: string[] = [];
+  const targets: Array<{ chatId: number; threadId?: number }> = [];
+  const handled = await handleTelegramNewSessionConfirmationCallback(
+    {
+      id: "callback-1",
+      data: "new:confirm",
+      message: { chat: { id: -100123 }, message_id: 44 },
+    },
+    {
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      hasActiveTelegramTurn: () => false,
+      hasDispatchPending: () => false,
+      hasQueuedTelegramItems: () => false,
+      isCompactionInProgress: () => false,
+      hasPendingSessionReplacement: () => false,
+      requestNewSession: (target) => {
+        targets.push(target);
+        return { accepted: true };
+      },
+      answerCallbackQuery: async (id) => {
+        answers.push(id);
+      },
+      editInteractiveMessage: async (_chatId, _messageId, text) => {
+        edits.push(text);
+      },
+    },
+  );
+  assert.equal(handled, true);
+  assert.deepEqual(targets, [{ chatId: -100123 }]);
+  assert.deepEqual(answers, ["callback-1"]);
+  assert.deepEqual(edits, ["🆕 Starting a new shared session."]);
+});
+
 test("/new rejects every required busy guard before requesting replacement", async () => {
   const guards: Array<[string, (state: Record<string, boolean>) => void, string]> = [
     ["not idle", (state) => (state.idle = false), "Pi is busy"],
@@ -229,6 +299,20 @@ test("Command helpers register Telegram bot commands through deps", async () => 
     },
   })();
   assert.deepEqual(calls, [TELEGRAM_BOT_COMMANDS, TELEGRAM_BOT_COMMANDS]);
+});
+
+test("Command helpers scope the household command menu to the allowlisted chat", async () => {
+  const calls: unknown[] = [];
+  const scope = { type: "chat" as const, chat_id: -100123 };
+
+  await registerTelegramBotCommands({
+    getScope: () => scope,
+    setMyCommands: async (commands, selectedScope) => {
+      calls.push({ commands, scope: selectedScope });
+    },
+  });
+
+  assert.deepEqual(calls, [{ commands: TELEGRAM_BOT_COMMANDS, scope }]);
 });
 
 test("Command helpers keep extension Telegram bot commands hidden by default", async () => {

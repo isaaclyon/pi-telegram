@@ -23,6 +23,11 @@ export interface TelegramBotCommandDefinition {
   description: string;
 }
 
+export interface TelegramBotCommandScopeChat {
+  type: "chat";
+  chat_id: number;
+}
+
 export interface TelegramPromptTemplateMenuCommand {
   command: string;
   description?: string;
@@ -256,25 +261,30 @@ export function getTelegramReservedCommandNames(): string[] {
 export interface TelegramBotCommandRegistrationDeps {
   setMyCommands: (
     commands: readonly TelegramBotCommandDefinition[],
+    scope?: TelegramBotCommandScopeChat,
   ) => Promise<unknown>;
+  getScope?: () => TelegramBotCommandScopeChat | undefined;
 }
 
 export async function registerTelegramBotCommands(
   deps: TelegramBotCommandRegistrationDeps,
 ): Promise<void> {
+  const scope = deps.getScope?.();
+  const publish = (commands: readonly TelegramBotCommandDefinition[]) =>
+    deps.setMyCommands(commands, scope);
   const extensionCommands = getVisibleTelegramExtensionBotCommands();
   if (extensionCommands.length === 0) {
-    await deps.setMyCommands(TELEGRAM_BOT_COMMANDS);
+    await publish(TELEGRAM_BOT_COMMANDS);
     return;
   }
   const compactCommandIndex = TELEGRAM_BOT_COMMANDS.findIndex(
     (command) => command.command === "compact",
   );
   if (compactCommandIndex === -1) {
-    await deps.setMyCommands([...TELEGRAM_BOT_COMMANDS, ...extensionCommands]);
+    await publish([...TELEGRAM_BOT_COMMANDS, ...extensionCommands]);
     return;
   }
-  await deps.setMyCommands([
+  await publish([
     ...TELEGRAM_BOT_COMMANDS.slice(0, compactCommandIndex + 1),
     ...extensionCommands,
     ...TELEGRAM_BOT_COMMANDS.slice(compactCommandIndex + 1),
@@ -556,6 +566,34 @@ export interface TelegramNewSessionCommandDeps<TMessage> {
   ) => { accepted: boolean; reason?: string };
   getMessageTarget: (message: TMessage) => TelegramNewSessionTarget;
   sendTextReply: (text: string) => Promise<void>;
+  requiresConfirmation?: () => boolean;
+  sendConfirmation?: (target: TelegramNewSessionTarget) => Promise<void>;
+  acceptedMessage?: string;
+}
+
+export interface TelegramNewSessionConfirmationCallbackQuery {
+  id: string;
+  data?: string;
+  message?: {
+    chat?: { id?: number };
+    message_id?: number;
+    message_thread_id?: number;
+  };
+}
+
+export interface TelegramNewSessionConfirmationCallbackDeps
+  extends Omit<
+    TelegramNewSessionCommandDeps<TelegramNewSessionConfirmationCallbackQuery["message"]>,
+    "getMessageTarget" | "sendTextReply" | "requiresConfirmation" | "sendConfirmation"
+  > {
+  answerCallbackQuery: (callbackQueryId: string, text?: string) => Promise<void>;
+  editInteractiveMessage: (
+    chatId: number,
+    messageId: number,
+    text: string,
+    mode: "markdown" | "html" | "plain",
+    replyMarkup: TelegramCompactConfirmationReplyMarkup,
+  ) => Promise<void>;
 }
 
 export interface TelegramCompactCommandDeps extends TelegramRuntimeEventRecorderPort {
@@ -905,6 +943,7 @@ export interface TelegramCommandRuntimeDeps<
   requestNewSession?: (
     target: TelegramNewSessionTarget,
   ) => { accepted: boolean; reason?: string };
+  requiresNewSessionConfirmation?: () => boolean;
   setCompactionInProgress: (inProgress: boolean) => void;
   updateStatus: (ctx: TContext) => void;
   dispatchNextQueuedTelegramTurn: (ctx: TContext) => void;
@@ -1134,6 +1173,14 @@ export async function handleTelegramNewSessionCommand<TMessage>(
     await deps.sendTextReply("A new session replacement is already pending.");
     return;
   }
+  if (deps.requiresConfirmation?.()) {
+    if (!deps.sendConfirmation) {
+      await deps.sendTextReply("New session confirmation is unavailable.");
+      return;
+    }
+    await deps.sendConfirmation(deps.getMessageTarget(message));
+    return;
+  }
   const result = deps.requestNewSession(deps.getMessageTarget(message));
   if (!result.accepted) {
     await deps.sendTextReply(
@@ -1141,7 +1188,60 @@ export async function handleTelegramNewSessionCommand<TMessage>(
     );
     return;
   }
-  await deps.sendTextReply("🆕 Starting a new session in this thread.");
+  await deps.sendTextReply(
+    deps.acceptedMessage ?? "🆕 Starting a new session in this thread.",
+  );
+}
+
+export function getTelegramNewSessionConfirmationReplyMarkup(): TelegramCompactConfirmationReplyMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "🆕 Start shared session", callback_data: "new:confirm" },
+        { text: "❌ Cancel", callback_data: "new:cancel" },
+      ],
+    ],
+  };
+}
+
+export async function handleTelegramNewSessionConfirmationCallback(
+  query: TelegramNewSessionConfirmationCallbackQuery,
+  deps: TelegramNewSessionConfirmationCallbackDeps,
+): Promise<boolean> {
+  if (query.data !== "new:confirm" && query.data !== "new:cancel") return false;
+  const message = query.message;
+  const chatId = message?.chat?.id;
+  const messageId = message?.message_id;
+  if (typeof chatId !== "number" || typeof messageId !== "number") {
+    await deps.answerCallbackQuery(query.id, "Interactive message expired.");
+    return true;
+  }
+  if (query.data === "new:cancel") {
+    await deps.editInteractiveMessage(
+      chatId,
+      messageId,
+      "New shared session cancelled.",
+      "plain",
+      { inline_keyboard: [] },
+    );
+    await deps.answerCallbackQuery(query.id);
+    return true;
+  }
+  const target =
+    typeof message?.message_thread_id === "number"
+      ? { chatId, threadId: message.message_thread_id }
+      : { chatId };
+  await handleTelegramNewSessionCommand(message!, {
+    ...deps,
+    getMessageTarget: () => target,
+    sendTextReply: (text) =>
+      deps.editInteractiveMessage(chatId, messageId, text, "plain", {
+        inline_keyboard: [],
+      }),
+    acceptedMessage: "🆕 Starting a new shared session.",
+  });
+  await deps.answerCallbackQuery(query.id);
+  return true;
 }
 
 export async function handleTelegramStopCommand(
@@ -1515,6 +1615,7 @@ export function createTelegramCommandHandlerTargetRuntime<
     hasPendingSessionReplacement: deps.hasPendingSessionReplacement ?? (() => false),
     requestNewSession:
       deps.requestNewSession ?? (() => ({ accepted: false, reason: "New session is unavailable from this Pi host." })),
+    requiresNewSessionConfirmation: deps.requiresNewSessionConfirmation,
     setCompactionInProgress: deps.setCompactionInProgress,
     updateStatus: deps.updateStatus,
     dispatchNextQueuedTelegramTurn: deps.dispatchNextQueuedTelegramTurn,
@@ -1534,6 +1635,7 @@ export function createTelegramCommandHandlerTargetRuntime<
     setAllowedUserId: deps.setAllowedUserId,
     registerBotCommands: createTelegramBotCommandRegistrar({
       setMyCommands: deps.setMyCommands,
+      getScope: deps.getScope,
     }),
     persistConfig: deps.persistConfig,
     sendTextReply: commandTargetRuntime.sendTextReply,
@@ -1728,6 +1830,18 @@ async function handleTelegramCommandRuntime<
             })),
           getMessageTarget: getTelegramNewSessionMessageTarget,
           sendTextReply: sendReplyFor(nextMessage),
+          requiresConfirmation: deps.requiresNewSessionConfirmation,
+          sendConfirmation: deps.sendInteractiveMessage
+            ? async (target) => {
+                await deps.sendInteractiveMessage?.(
+                  target.chatId,
+                  "<b>Start a new shared session?</b>\n\nThis clears the shared conversation history for both household members.",
+                  "html",
+                  getTelegramNewSessionConfirmationReplyMarkup(),
+                  target.threadId === undefined ? undefined : { target },
+                );
+              }
+            : undefined,
         });
       },
       handleStatus: async (nextMessage, commandCtx) => {

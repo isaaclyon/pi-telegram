@@ -16,6 +16,7 @@ import * as Model from "../lib/model.ts";
 import * as Outbound from "../lib/outbound.ts";
 import * as Queue from "../lib/queue.ts";
 import * as Routing from "../lib/routing.ts";
+import { registerTelegramHostHouseholdGroup } from "../lib/host.ts";
 import * as Runtime from "../lib/runtime.ts";
 import * as TextGroups from "../lib/text-groups.ts";
 import * as Threads from "../lib/threads.ts";
@@ -33,7 +34,7 @@ interface TestModel extends Model.MenuModel {
 interface TestUser extends Updates.TelegramUser {}
 
 interface TestMessage extends Routing.TelegramRoutedMessage {
-  chat: { id: number; type: "private" };
+  chat: { id: number; type: "private" | "group" | "supergroup" };
   from?: TestUser;
   message_id: number;
   message_thread_id?: number;
@@ -321,6 +322,49 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
       events.some((event) => event.startsWith(`user:[callback] ${data}:`)),
       false,
     );
+  }
+});
+
+test("Routing runtime attributes household callback prompts to the trusted actor", async () => {
+  const dispose = registerTelegramHostHouseholdGroup({
+    kind: "household-group",
+    chatId: -100123,
+    actors: [
+      { userId: 101, label: "Isaac" },
+      { userId: 202, label: "Emma" },
+    ],
+  });
+  try {
+    const { routeRuntime, telegramQueueStore } = createRouteHarness();
+    await routeRuntime.handleUpdate(
+      {
+        callback_query: {
+          id: "cb-household",
+          from: { id: 202, is_bot: false },
+          data: "workflow:approve",
+          message: {
+            message_id: 13,
+            chat: { id: -100123, type: "supergroup" },
+            from: { id: 202, is_bot: false },
+          },
+        },
+      },
+      { cwd: "/repo" },
+    );
+    const turn = telegramQueueStore.getQueuedItems()[0];
+    assert.equal(turn?.kind, "prompt");
+    if (turn?.kind === "prompt") {
+      assert.equal(turn.actorLabel, "Emma");
+      assert.equal(turn.actorUserId, 202);
+      assert.deepEqual(turn.content, [
+        {
+          type: "text",
+          text: "[telegram|actor:Emma] [callback] workflow:approve",
+        },
+      ]);
+    }
+  } finally {
+    dispose();
   }
 });
 

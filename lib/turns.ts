@@ -317,6 +317,7 @@ export function updateQueuedTelegramPromptTurnText<
   telegramPrefix: string;
   rawText: string;
   statusText?: string;
+  actorUserId?: number;
 }): { items: TelegramQueueItem<TContext>[]; changed: boolean } {
   if (options.sourceMessageId === undefined) {
     return { items: options.items, changed: false };
@@ -325,7 +326,9 @@ export function updateQueuedTelegramPromptTurnText<
   const items = options.items.map((item) => {
     if (
       item.kind !== "prompt" ||
-      !item.sourceMessageIds.includes(options.sourceMessageId as number)
+      !item.sourceMessageIds.includes(options.sourceMessageId as number) ||
+      (options.actorUserId !== undefined &&
+        item.actorUserId !== options.actorUserId)
     ) {
       return item;
     }
@@ -349,13 +352,23 @@ export interface TelegramQueuedPromptEditRuntimeDeps<
 export function createTelegramQueuedPromptEditRuntime<
   TMessage extends TelegramMediaMessage,
   TContext = unknown,
->(deps: TelegramQueuedPromptEditRuntimeDeps<TContext>) {
+>(
+  deps: TelegramQueuedPromptEditRuntimeDeps<TContext> & {
+    getTelegramActorLabel?: (message: TMessage) => string | undefined;
+  },
+) {
   return {
     updateFromEditedMessage: (message: TMessage, ctx: TContext): boolean => {
+      const actorLabel = deps.getTelegramActorLabel?.(message);
+      const actorUserId = actorLabel
+        ? (message as { from?: { id?: unknown } }).from?.id
+        : undefined;
       const { changed, items } = updateQueuedTelegramPromptTurnText({
         items: deps.getQueuedItems(),
         sourceMessageId: message.message_id,
-        telegramPrefix: TELEGRAM_PREFIX,
+        telegramPrefix: createTelegramTurnPrefix({ actor: actorLabel }),
+        actorUserId:
+          typeof actorUserId === "number" ? actorUserId : undefined,
         rawText: extractTelegramMessagesPromptText([message]),
         statusText: extractTelegramMessagesText([message]),
       });
@@ -408,6 +421,8 @@ export interface TelegramPromptTurnRuntimeBuilderDeps<
   isVoiceReplyModeConfigured?: () => boolean;
   /** Returns the visible thread label for a message target, used to add thread context to the prompt prefix. */
   getTelegramThreadLabel?: (message: { chat: { id: number }; message_thread_id?: number }) => string | undefined;
+  /** Returns a trusted host-owned actor label for an authorized multi-actor surface. */
+  getTelegramActorLabel?: (message: TelegramTurnMessage) => string | undefined;
   getAllowedUserId?: () => number | undefined;
 }
 
@@ -464,8 +479,14 @@ export function createTelegramPromptTurnRuntimeBuilder<
     const threadLabel = firstMessage
       ? deps.getTelegramThreadLabel?.(firstMessage)
       : undefined;
-    const telegramPrefix = createTelegramTurnPrefix({ thread: threadLabel });
-    return buildTelegramPromptTurnRuntime({
+    const actorLabel = firstMessage
+      ? deps.getTelegramActorLabel?.(firstMessage)
+      : undefined;
+    const telegramPrefix = createTelegramTurnPrefix({
+      thread: threadLabel,
+      actor: actorLabel,
+    });
+    const turn = await buildTelegramPromptTurnRuntime({
       telegramPrefix,
       messages,
       historyTurns,
@@ -486,6 +507,12 @@ export function createTelegramPromptTurnRuntimeBuilder<
         rawText,
       ),
     });
+    const actorUserId = actorLabel
+      ? (firstMessage as { from?: { id?: unknown } } | undefined)?.from?.id
+      : undefined;
+    return actorLabel && typeof actorUserId === "number"
+      ? { ...turn, actorLabel, actorUserId }
+      : turn;
   };
 }
 

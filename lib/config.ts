@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { resolveAgentDir, resolveTelegramConfigPath } from "./paths.ts";
+import { getTelegramHostHouseholdTarget } from "./host.ts";
 
 import type { TelegramInboundHandlerConfig } from "./inbound.ts";
 import type { CommandTemplateObjectConfig } from "./command-templates.ts";
@@ -54,6 +55,8 @@ export interface TelegramConfig {
   assistant?: {
     draftPreviews?: boolean;
     rendering?: TelegramAssistantRenderingMode;
+    /** Live tool-activity status message while the agent runs tools (default on) */
+    toolActivity?: boolean;
   };
   /** @deprecated use assistant.draftPreviews */
   draftPreviews?: boolean;
@@ -445,6 +448,27 @@ export function createTelegramDraftPreviewsSetter(
   };
 }
 
+export function createTelegramToolActivityChecker(
+  configStore: Pick<TelegramConfigStore, "get">,
+): () => boolean {
+  return () => configStore.get().assistant?.toolActivity ?? true;
+}
+
+export function createTelegramToolActivitySetter(
+  configStore: TelegramMutableConfigStore,
+): (enabled: boolean) => Promise<void> {
+  return async (enabled) => {
+    await loadLatestTelegramConfig(configStore);
+    const current = configStore.get();
+    const config = {
+      ...current,
+      assistant: { ...current.assistant, toolActivity: enabled },
+    };
+    configStore.set(config);
+    await configStore.persist(config);
+  };
+}
+
 export function createTelegramAssistantRenderingModeGetter(
   configStore: Pick<TelegramConfigStore, "get">,
 ): () => TelegramAssistantRenderingMode {
@@ -582,7 +606,10 @@ export function createTelegramProactivePushChatIdGetter(deps: {
   getActiveTurnChatId: () => number | undefined;
   getAllowedUserId: () => number | undefined;
 }): () => number | undefined {
-  return () => deps.getActiveTurnChatId() ?? deps.getAllowedUserId();
+  return () =>
+    deps.getActiveTurnChatId() ??
+    getTelegramHostHouseholdTarget()?.chatId ??
+    deps.getAllowedUserId();
 }
 
 export function createTelegramProactivePushTargetGetter(deps: {
@@ -595,6 +622,8 @@ export function createTelegramProactivePushTargetGetter(deps: {
     if (activeTarget) return activeTarget;
     const assignedTarget = deps.getAssignedTarget();
     if (assignedTarget) return assignedTarget;
+    const householdTarget = getTelegramHostHouseholdTarget();
+    if (householdTarget) return householdTarget;
     const chatId = deps.getAllowedUserId();
     return typeof chatId === "number" ? { chatId } : undefined;
   };
@@ -608,6 +637,8 @@ export function createTelegramConfigControls(
     setProactivePushEnabled: createTelegramProactivePushSetter(configStore),
     areDraftPreviewsEnabled: createTelegramDraftPreviewsChecker(configStore),
     setDraftPreviewsEnabled: createTelegramDraftPreviewsSetter(configStore),
+    isToolActivityEnabled: createTelegramToolActivityChecker(configStore),
+    setToolActivityEnabled: createTelegramToolActivitySetter(configStore),
     getAssistantRenderingMode:
       createTelegramAssistantRenderingModeGetter(configStore),
     setAssistantRenderingMode:

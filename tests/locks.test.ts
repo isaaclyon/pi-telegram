@@ -520,6 +520,93 @@ test("Locked polling runtime stops follower heartbeat on stop", async () => {
   }
 });
 
+test("Locked polling runtime fires onPollingStarted once it owns the bot", async () => {
+  const temp = createTempLockPath();
+  try {
+    const events: string[] = [];
+    const lock = createTelegramLockRuntime({ locksPath: temp.path, pid: 10 });
+    const runtime = createTelegramLockedPollingRuntime({
+      lock,
+      hasBotToken: () => true,
+      startPolling: async () => {
+        events.push("start");
+      },
+      stopPolling: async () => undefined,
+      updateStatus: () => undefined,
+      onPollingStarted: (ctx) => {
+        events.push(`commands:${ctx.cwd}`);
+      },
+    });
+    assert.equal((await runtime.start({ cwd: "/repo" })).ok, true);
+    await waitForCondition(() => events.includes("commands:/repo"));
+    assert.deepEqual(events, ["start", "commands:/repo"]);
+  } finally {
+    rmSync(temp.dir, { recursive: true, force: true });
+  }
+});
+
+test("Locked polling runtime does not fire onPollingStarted when start is blocked", async () => {
+  const temp = createTempLockPath();
+  try {
+    let fired = false;
+    writeFileSync(
+      temp.path,
+      JSON.stringify({ [TELEGRAM_LOCK_KEY]: { pid: 99, cwd: "/old" } }),
+    );
+    const lock = createTelegramLockRuntime({
+      locksPath: temp.path,
+      pid: 10,
+      isProcessAlive: (pid) => pid === 99,
+    });
+    const runtime = createTelegramLockedPollingRuntime({
+      lock,
+      hasBotToken: () => true,
+      startPolling: async () => undefined,
+      stopPolling: async () => undefined,
+      updateStatus: () => undefined,
+      onPollingStarted: () => {
+        fired = true;
+      },
+    });
+    assert.equal((await runtime.start({ cwd: "/new" })).ok, false);
+    assert.equal(fired, false);
+  } finally {
+    rmSync(temp.dir, { recursive: true, force: true });
+  }
+});
+
+test("Locked polling runtime swallows onPollingStarted failures without blocking the connect", async () => {
+  const temp = createTempLockPath();
+  try {
+    const runtimeEvents: string[] = [];
+    const lock = createTelegramLockRuntime({ locksPath: temp.path, pid: 10 });
+    const runtime = createTelegramLockedPollingRuntime({
+      lock,
+      hasBotToken: () => true,
+      startPolling: async () => undefined,
+      stopPolling: async () => undefined,
+      updateStatus: () => undefined,
+      onPollingStarted: () => {
+        throw new Error("setMyCommands failed");
+      },
+      recordRuntimeEvent: (category, error, details) => {
+        runtimeEvents.push(
+          `${category}:${details?.phase}:${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
+    });
+    assert.equal((await runtime.start({ cwd: "/repo" })).ok, true);
+    await waitForCondition(() =>
+      runtimeEvents.some((event) => event.includes("polling-started-hook")),
+    );
+    assert.deepEqual(runtimeEvents, [
+      "lock:polling-started-hook:setMyCommands failed",
+    ]);
+  } finally {
+    rmSync(temp.dir, { recursive: true, force: true });
+  }
+});
+
 test("Locked polling runtime can force takeover of live polling owners", async () => {
   const temp = createTempLockPath();
   try {

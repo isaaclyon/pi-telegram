@@ -15,6 +15,8 @@ import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
 import * as Threads from "./lib/threads.ts";
 import * as Inbound from "./lib/inbound.ts";
+import * as Inbox from "./lib/inbox.ts";
+import * as Host from "./lib/host.ts";
 import * as Lifecycle from "./lib/lifecycle.ts";
 import * as Locks from "./lib/locks.ts";
 import * as Media from "./lib/media.ts";
@@ -42,6 +44,7 @@ import * as TelegramApi from "./lib/telegram-api.ts";
 import * as TextGroups from "./lib/text-groups.ts";
 import * as ThreadReconciler from "./lib/thread-reconciler.ts";
 import * as TimeInjection from "./lib/time-injection.ts";
+import * as ToolActivity from "./lib/tool-activity.ts";
 import * as Updates from "./lib/updates.ts";
 import * as Voice from "./lib/voice.ts";
 
@@ -137,7 +140,7 @@ export default function (pi: Pi.ExtensionAPI) {
   configStoreForRedaction = configStore;
   getRuntimeLogProfileName = configStore.getActiveProfileName;
   const isTelegramBusConfigured = function (): boolean {
-    return true;
+    return Host.isTelegramHostPrivateChatThreadedModeAllowed();
   };
   const isTelegramBusRuntimeEnabled = function (): boolean {
     return isTelegramBusConfigured() && !telegramTopicModeUnavailable;
@@ -222,8 +225,12 @@ export default function (pi: Pi.ExtensionAPI) {
     TelegramApi.TelegramMessage,
     Pi.ExtensionContext
   >();
-  const telegramQueueStore =
-    Queue.createTelegramQueueStore<Pi.ExtensionContext>();
+  // ADR-0003 (host): reconcile a host-provided durable inbox on every queue
+  // mutation so accepted turns survive a crash. No-op until a host registers one.
+  const telegramQueueStore = Inbox.withTelegramInboundInboxPersistence(
+    Queue.createTelegramQueueStore<Pi.ExtensionContext>(),
+  );
+  let telegramInboxReplayed = false;
   const deferredQueueDispatchRuntime =
     Queue.createTelegramDeferredQueueDispatchRuntime<Pi.ExtensionContext>({
       delayMs: 50,
@@ -310,6 +317,7 @@ export default function (pi: Pi.ExtensionAPI) {
     Queue.TelegramQueueItem<Pi.ExtensionContext>
   >({
     getConfig: configStore.get,
+    getAuthorizationSurface: Host.getTelegramHostHouseholdStatus,
     getActiveProfileName: configStore.getActiveProfileName,
     getDiagnosticPaths: Paths.getTelegramDiagnosticsDisplayPaths,
     isPollingActive: Polling.createTelegramPollingActivityReader(
@@ -485,7 +493,6 @@ export default function (pi: Pi.ExtensionAPI) {
     deleteMessage: deleteTelegramMessage,
     prepareTempDir,
   } = telegramApiRuntime;
-
   // --- Message Delivery ---
 
   const sendGuestReply = Replies.createGuestMarkdownReplySender({
@@ -608,6 +615,18 @@ export default function (pi: Pi.ExtensionAPI) {
       getHandlers: configStore.getOutboundHandlers,
       recordRuntimeEvent,
     });
+  const toolActivityRuntime = ToolActivity.createTelegramToolActivityRuntime({
+    isEnabled: configControls.isToolActivityEnabled,
+    getActiveTurn: activeTurnRuntime.get,
+    sendMessage,
+    editMessageText: editTelegramMessageText,
+    deleteMessage: deleteTelegramMessage,
+    getCwd() {
+      const ctx = telegramSessionContextStore.get();
+      return ctx ? Pi.getExtensionContextCwd(ctx) : undefined;
+    },
+    recordRuntimeEvent,
+  });
 
   // --- Model And Menu Setup ---
 
@@ -846,6 +865,7 @@ export default function (pi: Pi.ExtensionAPI) {
     answerGuestQuery,
     sendTextReply,
     setMyCommands,
+    getBotCommandScope: Host.getTelegramHostHouseholdCommandScope,
     getCommands,
     downloadFile: downloadTelegramBridgeFile,
     resolveTimeLine: timeInjectionRuntime.resolveLine,
@@ -1218,6 +1238,12 @@ export default function (pi: Pi.ExtensionAPI) {
     registerFollowerWithOwner: threadAwarePollingPorts.registerFollowerWithOwner,
     stopFollowerRegistration: threadAwarePollingPorts.stopFollowerRegistration,
     updateStatus,
+    // Publish the command menu once this instance owns the bot, so `/`
+    // autocomplete (including /new) appears without a manual /help.
+    onPollingStarted: Commands.createTelegramBotCommandRegistrar({
+      setMyCommands,
+      getScope: Host.getTelegramHostHouseholdCommandScope,
+    }),
     recordRuntimeEvent,
   });
   const disconnectTelegramAndDeleteCurrentThread =
@@ -1280,6 +1306,14 @@ export default function (pi: Pi.ExtensionAPI) {
     {
       async onSessionStart(event, ctx) {
         await lockedPollingRuntime.onSessionStart(event, ctx);
+        if (!telegramInboxReplayed) {
+          telegramInboxReplayed = true;
+          const replayed = Inbox.replayTelegramInboundInbox(
+            telegramQueueStore,
+            Inbox.getTelegramInboundInbox(),
+          );
+          if (replayed > 0) queueMutationRuntime.reorder(ctx);
+        }
         telegramThreadCapabilityMonitor.start(ctx);
         queueDispatchWatchdogRuntime.start(ctx);
       },
@@ -1357,6 +1391,7 @@ export default function (pi: Pi.ExtensionAPI) {
     telegramQueueStore,
     modelSwitchController,
     previewRuntime,
+    toolActivityRuntime,
     promptDispatchRuntime,
     deferredQueueDispatchRuntime,
     lockOwnershipGuard,
