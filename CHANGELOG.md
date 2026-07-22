@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased: Host-Authorized Household Group
+
+- `[Authorization]` Added an optional host-registered policy for exactly one Telegram group and exactly two allowlisted human actors. Default routing now validates both target and actor for messages, edits, callbacks, reactions, media, and durable replay; DMs, foreign chats, outsiders, bots, anonymous/channel authors, migration events, and unverifiable updates fail closed.
+- `[Attribution]` Household turns use host-owned stable prompt labels such as `[telegram|actor:Isaac]`, retain actor id/label plus exact target through queues, edits, media grouping, buttons, and replay, and never treat mutable Telegram names as authorization or prompt identity.
+- `[Isolation]` Household mode replaces personal pairing for the runtime, keeps one shared queue/session, targets all replies to the configured group, and disables private-chat Threaded Mode and Guest Mode. Classic personal-DM behavior remains unchanged when no household policy is registered.
+- `[Shared Session Control]` Household `/new` now requires an actor-authorized inline confirmation before it replaces the history shared by both people, re-running all idle/queue/compaction/replacement guards when the callback arrives. Personal-DM `/new` remains immediate after its existing guards.
+- `[Diagnostics]` Status reports only `surface: household group` and the stable authorized labels; bot tokens, chat ids, and actor ids remain absent.
+- `[Validation]` Added host-registry, authorization, transport, replay, edit/button attribution, status, routing, and extension-runtime regressions, including a mixed DM/outsider/authorized-actor batch proving that only the authorized group turn reaches Pi.
+
 ## Unreleased: Tool Activity Status Message
 
 - `[Tool Activity]` While the agent runs tools, the bridge now posts one quiet (`disable_notification`) status message on the first `tool_execution_start` and edits it in place as tools progress: the last six tool lines with compact argument hints (`▸ read lib/host.ts`, `⏳ bash: npm test`, `✗` on error) plus a `(N tools · 45s)` footer. Edits are single-flight and throttled to one per 2s to respect Telegram's per-chat edit limits, and the message is deleted at `agent_end` before the final reply is delivered. Impact: long tool-heavy turns are no longer silent between the user's prompt and the final answer, and chat history stays clean afterward.

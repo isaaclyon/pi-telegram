@@ -8,6 +8,7 @@ import { mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { registerTelegramHostHouseholdGroup } from "../lib/host.ts";
 
 import type { TelegramConfig } from "../lib/config.ts";
 import {
@@ -84,6 +85,27 @@ test("Telegram proactive target getter prefers active then assigned targets", ()
     getAllowedUserId: () => 7,
   });
   assert.deepEqual(privateTarget(), { chatId: 7 });
+});
+
+test("Telegram proactive target getter falls back to the host household group", () => {
+  const dispose = registerTelegramHostHouseholdGroup({
+    kind: "household-group",
+    chatId: -100123,
+    actors: [
+      { userId: 101, label: "Isaac" },
+      { userId: 202, label: "Emma" },
+    ],
+  });
+  try {
+    const target = createTelegramProactivePushTargetGetter({
+      getActiveTurnTarget: () => undefined,
+      getAssignedTarget: () => undefined,
+      getAllowedUserId: () => undefined,
+    });
+    assert.deepEqual(target(), { chatId: -100123 });
+  } finally {
+    dispose();
+  }
 });
 
 test("Telegram config helpers persist and reload config", async () => {

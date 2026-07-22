@@ -453,6 +453,29 @@ test("Turn builder keeps group topic metadata out of prompt prefix", async () =>
   );
 });
 
+test("runtime turn builder carries a trusted household actor label", async () => {
+  const buildTurn = createTelegramPromptTurnRuntimeBuilder({
+    allocateQueueOrder: () => 1,
+    downloadFile: async () => "/tmp/unused",
+    getTelegramActorLabel: () => "Emma",
+  });
+  const turn = await buildTurn([
+    {
+      message_id: 15,
+      chat: { id: -1007, type: "supergroup" },
+      from: { id: 202, is_bot: false },
+      text: "can we add this?",
+    },
+  ]);
+  assert.equal(turn.actorLabel, "Emma");
+  assert.equal(turn.actorUserId, 202);
+  assert.equal(
+    (turn.content[0] as { type: "text"; text: string }).text,
+    "[telegram|actor:Emma] can we add this?",
+  );
+  assert.deepEqual(turn.target, { chatId: -1007 });
+});
+
 test("Voice reply mode tags turn when voice file present and mode is mirror", async () => {
   const turn = await buildTelegramPromptTurnRuntime({
     telegramPrefix: "[telegram]",
@@ -684,6 +707,64 @@ test("Turn edit runtime binds queued prompt updates to status", () => {
     "[telegram] edited",
   );
   assert.deepEqual(events, ["items:1", "status:ctx"]);
+});
+
+test("Turn edit runtime preserves trusted actor attribution and rejects another actor", () => {
+  let items = [
+    {
+      kind: "prompt" as const,
+      chatId: -100123,
+      target: { chatId: -100123 },
+      actorLabel: "Isaac",
+      actorUserId: 101,
+      replyToMessageId: 10,
+      sourceMessageIds: [10],
+      queueOrder: 1,
+      queueLane: "default" as const,
+      laneOrder: 1,
+      queuedAttachments: [],
+      content: [
+        { type: "text" as const, text: "[telegram|actor:Isaac] old" },
+      ],
+      historyText: "old",
+      statusSummary: "old",
+    },
+  ];
+  const runtime = createTelegramQueuedPromptEditRuntime<
+    { message_id: number; text?: string; from?: { id: number } },
+    string
+  >({
+    getQueuedItems: () => items,
+    setQueuedItems: (nextItems) => {
+      items = nextItems as typeof items;
+    },
+    updateStatus: () => {},
+    getTelegramActorLabel: (message) =>
+      message.from?.id === 101 ? "Isaac" : "Emma",
+  });
+
+  assert.equal(
+    runtime.updateFromEditedMessage(
+      { message_id: 10, text: "edited", from: { id: 101 } },
+      "ctx",
+    ),
+    true,
+  );
+  assert.equal(
+    (items[0]?.content[0] as { text: string }).text,
+    "[telegram|actor:Isaac] edited",
+  );
+  assert.equal(
+    runtime.updateFromEditedMessage(
+      { message_id: 10, text: "hijacked", from: { id: 202 } },
+      "ctx",
+    ),
+    false,
+  );
+  assert.equal(
+    (items[0]?.content[0] as { text: string }).text,
+    "[telegram|actor:Isaac] edited",
+  );
 });
 
 test("Turn edit runtime keeps reply context prompt-only when queued messages change", () => {

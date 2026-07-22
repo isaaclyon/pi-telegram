@@ -19,6 +19,7 @@ import {
   withTelegramInboundInboxPersistence,
   type TelegramInboundInbox,
 } from "../lib/inbox.ts";
+import { registerTelegramHostHouseholdGroup } from "../lib/host.ts";
 import {
   createTelegramQueueStore,
   type PendingTelegramTurn,
@@ -196,4 +197,38 @@ test("replay seeds pending turns and returns the count", () => {
 
   // No inbox → nothing replayed.
   assert.equal(replayTelegramInboundInbox(createTelegramQueueStore(), undefined), 0);
+});
+
+test("replay can re-authorize durable household turns before queue admission", () => {
+  const inbox = createFakeInbox();
+  const store = createTelegramQueueStore();
+  const authorized = {
+    ...makeTurn(-100123, [10], "[telegram|actor:Isaac] hello"),
+    target: { chatId: -100123 },
+    actorLabel: "Isaac",
+    actorUserId: 101,
+  };
+  const foreign = {
+    ...makeTurn(-100999, [20], "[telegram|actor:Isaac] wrong group"),
+    target: { chatId: -100999 },
+    actorLabel: "Isaac",
+    actorUserId: 101,
+  };
+  reconcileTelegramInboundInbox(inbox, [authorized, foreign], 1);
+
+  const dispose = registerTelegramHostHouseholdGroup({
+    kind: "household-group",
+    chatId: -100123,
+    actors: [
+      { userId: 101, label: "Isaac" },
+      { userId: 202, label: "Emma" },
+    ],
+  });
+  try {
+    const replayed = replayTelegramInboundInbox(store, inbox);
+    assert.equal(replayed, 1);
+    assert.deepEqual(store.getQueuedItems(), [authorized]);
+  } finally {
+    dispose();
+  }
 });

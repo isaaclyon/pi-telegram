@@ -10,6 +10,10 @@ import * as Commands from "./commands.ts";
 import type { TelegramConfigStore } from "./config.ts";
 import type { TelegramSectionRegistry } from "./sections.ts";
 import type { TelegramInboundHandlerRuntime } from "./inbound.ts";
+import {
+  getTelegramHostHouseholdActorLabel,
+  getTelegramHostHouseholdGroup,
+} from "./host.ts";
 import * as Media from "./media.ts";
 import * as Menu from "./menu.ts";
 import * as Model from "./model.ts";
@@ -635,6 +639,7 @@ const TELEGRAM_OWNED_CALLBACK_PREFIXES = [
   TELEGRAM_ALL_TAB_MENU_CALLBACK_PREFIX,
   TELEGRAM_UNBOUND_REROUTE_CALLBACK_PREFIX,
   "compact:",
+  "new:",
   "menu:",
   "model:",
   "queue:",
@@ -1335,6 +1340,9 @@ export function createTelegramInboundRouteRuntime<
             if (typeof chatId !== "number" || typeof messageId !== "number")
               return;
             const queueOrder = deps.bridgeRuntime.queue.allocateItemOrder();
+            const actorLabel = getTelegramHostHouseholdActorLabel(
+              query.from.id,
+            );
             const turn = OutboundHandlers.createTelegramButtonPromptTurn({
               chatId,
               target:
@@ -1347,6 +1355,14 @@ export function createTelegramInboundRouteRuntime<
               replyToMessageId: messageId,
               queueOrder,
               action,
+              ...(actorLabel
+                ? {
+                    actor: {
+                      userId: query.from.id,
+                      label: actorLabel,
+                    },
+                  }
+                : {}),
             });
             const result = Queue.appendTelegramPromptTurnOnce(
               deps.telegramQueueStore.getQueuedItems(),
@@ -1405,6 +1421,27 @@ export function createTelegramInboundRouteRuntime<
         },
       });
     if (handledByCompact) return;
+    const handledByNewSession =
+      await Commands.handleTelegramNewSessionConfirmationCallback(query, {
+        isIdle: () => deps.isIdle(ctx),
+        hasPendingMessages: () => deps.hasPendingMessages(ctx),
+        hasActiveTelegramTurn: deps.activeTurnRuntime.has,
+        hasDispatchPending: deps.bridgeRuntime.lifecycle.hasDispatchPending,
+        hasQueuedTelegramItems: deps.telegramQueueStore.hasQueuedItems,
+        isCompactionInProgress:
+          deps.bridgeRuntime.lifecycle.isCompactionInProgress,
+        hasPendingSessionReplacement:
+          deps.hasPendingSessionReplacement ?? (() => false),
+        requestNewSession:
+          deps.requestNewSession ??
+          (() => ({
+            accepted: false,
+            reason: "New session is unavailable from this Pi host.",
+          })),
+        answerCallbackQuery: deps.answerCallbackQuery,
+        editInteractiveMessage: deps.editInteractiveMessage ?? (async () => {}),
+      });
+    if (handledByNewSession) return;
     const handledByQueue = await deps.queueMenuCallbackHandler(query, ctx);
     if (handledByQueue) return;
     const handledBySettings = await deps.settingsMenuCallbackHandler?.(
@@ -1418,6 +1455,7 @@ export function createTelegramInboundRouteRuntime<
       const messageId = query.message?.message_id;
       if (typeof chatId === "number" && typeof messageId === "number") {
         const queueOrder = deps.bridgeRuntime.queue.allocateItemOrder();
+        const actorLabel = getTelegramHostHouseholdActorLabel(query.from.id);
         const target =
           typeof query.message?.message_thread_id === "number"
             ? { chatId, threadId: query.message.message_thread_id }
@@ -1426,13 +1464,23 @@ export function createTelegramInboundRouteRuntime<
           kind: "prompt",
           chatId,
           target,
+          ...(actorLabel
+            ? { actorLabel, actorUserId: query.from.id }
+            : {}),
           replyToMessageId: messageId,
           sourceMessageIds: [messageId],
           queueOrder,
           queueLane: "priority",
           laneOrder: queueOrder,
           queuedAttachments: [],
-          content: [{ type: "text", text: `[callback] ${callbackData}` }],
+          content: [
+            {
+              type: "text",
+              text: actorLabel
+                ? `${Turns.createTelegramTurnPrefix({ actor: actorLabel })} [callback] ${callbackData}`
+                : `[callback] ${callbackData}`,
+            },
+          ],
           historyText: callbackData,
           statusSummary: callbackData,
         };
@@ -1460,6 +1508,11 @@ export function createTelegramInboundRouteRuntime<
     processAttachments: deps.inboundHandlerRuntime.process,
     resolveTimeLine: deps.resolveTimeLine,
     getAllowedUserId: deps.configStore.getAllowedUserId,
+    getTelegramActorLabel(message) {
+      return getTelegramHostHouseholdActorLabel(
+        (message as { from?: { id?: number } }).from?.id,
+      );
+    },
 
     // Voice policy for the current turn. Missing config still behaves as manual,
     // but only explicit telegram.json voice.replyMode is shown in prompt context.
@@ -1544,6 +1597,8 @@ export function createTelegramInboundRouteRuntime<
         accepted: false,
         reason: "New session is unavailable from this Pi host.",
       })),
+    requiresNewSessionConfirmation: () =>
+      getTelegramHostHouseholdGroup() !== undefined,
     setCompactionInProgress:
       deps.bridgeRuntime.lifecycle.setCompactionInProgress,
     updateStatus: deps.updateStatus,
@@ -1872,6 +1927,11 @@ export function createTelegramInboundRouteRuntime<
   >({
     ...deps.telegramQueueStore,
     updateStatus: deps.updateStatus,
+    getTelegramActorLabel(message) {
+      return getTelegramHostHouseholdActorLabel(
+        (message as { from?: { id?: number } }).from?.id,
+      );
+    },
   });
   const handleTelegramTopicLifecycleUpdate = async (
     lifecycle: Updates.TelegramTopicLifecycleUpdate<TMessage>,

@@ -11,6 +11,10 @@ import {
 } from "./target.ts";
 import type { TelegramMessageOwnershipStore } from "./ownership.ts";
 import {
+  getTelegramHostHouseholdActorLabel,
+  getTelegramHostHouseholdGroup,
+} from "./host.ts";
+import {
   createTelegramUserPairingRuntime,
   getTelegramAuthorizationState,
   type TelegramAuthorizationState,
@@ -127,8 +131,11 @@ export interface TelegramChat {
 export interface TelegramUpdateMessage {
   chat: TelegramChat;
   from?: TelegramUser;
+  sender_chat?: TelegramChat;
   message_id?: number;
   message_thread_id?: number;
+  migrate_to_chat_id?: number;
+  migrate_from_chat_id?: number;
   forum_topic_created?: unknown;
   forum_topic_closed?: unknown;
   forum_topic_reopened?: unknown;
@@ -203,6 +210,33 @@ export interface TelegramUpdateRouting {
   guest_message?: TelegramGuestMessage;
 }
 
+function getAuthorizedTelegramHouseholdActorLabel(input: {
+  chat?: TelegramChat;
+  from?: TelegramUser;
+  sender_chat?: TelegramChat;
+  migrate_to_chat_id?: number;
+  migrate_from_chat_id?: number;
+}): string | undefined {
+  const policy = getTelegramHostHouseholdGroup();
+  if (!policy) return undefined;
+  if (
+    input.chat?.id !== policy.chatId ||
+    (input.chat.type !== "group" && input.chat.type !== "supergroup") ||
+    !input.from ||
+    input.from.is_bot ||
+    input.sender_chat !== undefined ||
+    input.migrate_to_chat_id !== undefined ||
+    input.migrate_from_chat_id !== undefined
+  ) {
+    return undefined;
+  }
+  return getTelegramHostHouseholdActorLabel(input.from.id);
+}
+
+function isTelegramHouseholdSurfaceConfigured(): boolean {
+  return getTelegramHostHouseholdGroup() !== undefined;
+}
+
 export function getAuthorizedTelegramCallbackQuery(
   update: TelegramUpdateRouting,
   allowedUserId?: number,
@@ -211,6 +245,17 @@ export function getAuthorizedTelegramCallbackQuery(
   if (!query || query.from.is_bot) return undefined;
   const message = query.message;
   if (!message) return undefined;
+  if (isTelegramHouseholdSurfaceConfigured()) {
+    return getAuthorizedTelegramHouseholdActorLabel({
+      chat: message.chat,
+      from: query.from,
+      sender_chat: message.sender_chat,
+      migrate_to_chat_id: message.migrate_to_chat_id,
+      migrate_from_chat_id: message.migrate_from_chat_id,
+    })
+      ? query
+      : undefined;
+  }
   if (message.chat.type === "private") return query;
   return query.from.id === allowedUserId ? query : undefined;
 }
@@ -221,6 +266,11 @@ export function getAuthorizedTelegramMessage(
 ): TelegramUpdateMessage | undefined {
   const message = update.message;
   if (!message || !message.from || message.from.is_bot) return undefined;
+  if (isTelegramHouseholdSurfaceConfigured()) {
+    return getAuthorizedTelegramHouseholdActorLabel(message)
+      ? message
+      : undefined;
+  }
   if (message.chat.type === "private") return message;
   return message.from.id === allowedUserId ? message : undefined;
 }
@@ -231,6 +281,11 @@ export function getAuthorizedTelegramEditedMessage(
 ): TelegramUpdateMessage | undefined {
   const message = update.edited_message;
   if (!message || !message.from || message.from.is_bot) return undefined;
+  if (isTelegramHouseholdSurfaceConfigured()) {
+    return getAuthorizedTelegramHouseholdActorLabel(message)
+      ? message
+      : undefined;
+  }
   if (message.chat.type === "private") return message;
   return message.from.id === allowedUserId ? message : undefined;
 }
@@ -238,6 +293,7 @@ export function getAuthorizedTelegramEditedMessage(
 export function getAuthorizedTelegramGuestMessage(
   update: TelegramUpdateRouting,
 ): TelegramGuestMessage | undefined {
+  if (isTelegramHouseholdSurfaceConfigured()) return undefined;
   const guestMessage = update.guest_message;
   if (!guestMessage || !guestMessage.from || guestMessage.from.is_bot) {
     return undefined;
@@ -324,16 +380,19 @@ export type TelegramUpdateFlowAction<
       kind: "callback";
       query: TCallbackQuery;
       authorization: TelegramAuthorizationState;
+      actorLabel?: string;
     }
   | {
       kind: "message";
       message: TMessage & { from: TelegramUser };
       authorization: TelegramAuthorizationState;
+      actorLabel?: string;
     }
   | {
       kind: "edited-message";
       message: TMessage & { from: TelegramUser };
       authorization: TelegramAuthorizationState;
+      actorLabel?: string;
     }
   | {
       kind: "guest";
@@ -352,39 +411,57 @@ export function buildTelegramUpdateFlowAction<
   NonNullable<TUpdate["message"] | TUpdate["edited_message"]>,
   NonNullable<TUpdate["guest_message"]>
 > {
+  const householdPolicy = getTelegramHostHouseholdGroup();
   const deletedMessageIds = extractDeletedTelegramMessageIds(update);
   if (deletedMessageIds.length > 0) {
+    if (householdPolicy) return { kind: "ignore" };
     return { kind: "deleted", messageIds: deletedMessageIds };
   }
   if (update.message_reaction) {
+    if (
+      householdPolicy &&
+      !getAuthorizedTelegramHouseholdActorLabel({
+        chat: update.message_reaction.chat,
+        from: update.message_reaction.user,
+      })
+    ) {
+      return { kind: "ignore" };
+    }
     return { kind: "reaction", reactionUpdate: update.message_reaction };
   }
   const topicLifecycle = getTelegramTopicLifecycleUpdate(update.message);
   if (topicLifecycle) {
+    if (householdPolicy) return { kind: "ignore" };
     return { kind: "topic-lifecycle", lifecycle: topicLifecycle };
   }
   const query = getAuthorizedTelegramCallbackQuery(update, allowedUserId);
   if (query) {
+    const actorLabel = householdPolicy
+      ? getTelegramHostHouseholdActorLabel(query.from.id)
+      : undefined;
     return {
       kind: "callback",
       query: query as NonNullable<TUpdate["callback_query"]>,
-      authorization: getTelegramAuthorizationState(
-        query.from.id,
-        allowedUserId,
-      ),
+      authorization: householdPolicy
+        ? { kind: "allow" }
+        : getTelegramAuthorizationState(query.from.id, allowedUserId),
+      ...(actorLabel ? { actorLabel } : {}),
     };
   }
   const message = getAuthorizedTelegramMessage(update, allowedUserId);
   if (message?.from) {
+    const actorLabel = householdPolicy
+      ? getTelegramHostHouseholdActorLabel(message.from.id)
+      : undefined;
     return {
       kind: "message",
       message: message as NonNullable<
         TUpdate["message"] | TUpdate["edited_message"]
       > & { from: TelegramUser },
-      authorization: getTelegramAuthorizationState(
-        message.from.id,
-        allowedUserId,
-      ),
+      authorization: householdPolicy
+        ? { kind: "allow" }
+        : getTelegramAuthorizationState(message.from.id, allowedUserId),
+      ...(actorLabel ? { actorLabel } : {}),
     };
   }
   const editedMessage = getAuthorizedTelegramEditedMessage(
@@ -392,15 +469,18 @@ export function buildTelegramUpdateFlowAction<
     allowedUserId,
   );
   if (editedMessage?.from) {
+    const actorLabel = householdPolicy
+      ? getTelegramHostHouseholdActorLabel(editedMessage.from.id)
+      : undefined;
     return {
       kind: "edited-message",
       message: editedMessage as NonNullable<
         TUpdate["message"] | TUpdate["edited_message"]
       > & { from: TelegramUser },
-      authorization: getTelegramAuthorizationState(
-        editedMessage.from.id,
-        allowedUserId,
-      ),
+      authorization: householdPolicy
+        ? { kind: "allow" }
+        : getTelegramAuthorizationState(editedMessage.from.id, allowedUserId),
+      ...(actorLabel ? { actorLabel } : {}),
     };
   }
   const guestMessage = getAuthorizedTelegramGuestMessage(update);
@@ -956,6 +1036,15 @@ export async function handleAuthorizedTelegramReactionUpdate<TContext>(
   reactionUpdate: TelegramMessageReactionUpdated,
   deps: AuthorizedTelegramReactionUpdateDeps<TContext>,
 ): Promise<void> {
+  if (
+    isTelegramHouseholdSurfaceConfigured() &&
+    !getAuthorizedTelegramHouseholdActorLabel({
+      chat: reactionUpdate.chat,
+      from: reactionUpdate.user,
+    })
+  ) {
+    return;
+  }
   const foreignOwnership = getForeignTelegramMessageOwnership(
     getTelegramReactionMessageTarget(reactionUpdate),
     deps,

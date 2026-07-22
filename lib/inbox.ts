@@ -11,6 +11,7 @@ import {
   type TelegramQueueItem,
   type TelegramQueueStateStore,
 } from "./queue.ts";
+import { getTelegramHostHouseholdGroup } from "./host.ts";
 
 /** A durably stored prompt turn, keyed by its stable identity. */
 export interface TelegramInboundInboxRecord {
@@ -206,9 +207,20 @@ export function loadTelegramInboundInboxTurns(
 export function replayTelegramInboundInbox<TContext>(
   store: TelegramQueueStateStore<TContext>,
   inbox: TelegramInboundInbox | undefined,
+  authorize: (turn: PendingTelegramTurn) => boolean = (turn) => {
+    const policy = getTelegramHostHouseholdGroup();
+    if (!policy) return true;
+    if (turn.chatId !== policy.chatId || turn.target?.chatId !== policy.chatId) {
+      return false;
+    }
+    return policy.actors.some(
+      (actor) =>
+        actor.userId === turn.actorUserId && actor.label === turn.actorLabel,
+    );
+  },
 ): number {
   if (!inbox) return 0;
-  const turns = loadTelegramInboundInboxTurns(inbox);
+  const turns = loadTelegramInboundInboxTurns(inbox).filter(authorize);
   if (!turns.length) return 0;
   store.setQueuedItems([...store.getQueuedItems(), ...turns]);
   return turns.length;
