@@ -12,6 +12,7 @@ export const TELEGRAM_SESSION_REPLACEMENT_HANDOFF_TTL_MS = 30_000;
 export interface TelegramSessionReplacementHandoff {
   requestId: string;
   target: TelegramTarget;
+  profileName?: string;
   createdAtMs: number;
   expiresAtMs: number;
 }
@@ -31,6 +32,8 @@ function getHandoff(): TelegramSessionReplacementHandoff | undefined {
     !handoff.target ||
     typeof handoff.target !== "object" ||
     typeof handoff.target.chatId !== "number" ||
+    (handoff.profileName !== undefined &&
+      typeof handoff.profileName !== "string") ||
     typeof handoff.createdAtMs !== "number" ||
     typeof handoff.expiresAtMs !== "number" ||
     handoff.expiresAtMs <= handoff.createdAtMs
@@ -77,10 +80,12 @@ export interface TelegramSessionReplacementRuntime {
     target: TelegramTarget,
   ) => TelegramSessionReplacementRequestResult;
   flushAfterUpdatePersisted: () => boolean;
+  restoreProfile: () => boolean;
   onSessionStart: () => Promise<void>;
 }
 
 export function createTelegramSessionStartHook<TEvent, TContext>(deps: {
+  restoreSessionProfile?: () => boolean;
   refreshFollowerSession: (event: TEvent, ctx: TContext) => Promise<void>;
   onSessionStart: () => Promise<void>;
   recordRuntimeEvent?: (
@@ -90,6 +95,14 @@ export function createTelegramSessionStartHook<TEvent, TContext>(deps: {
   ) => void;
 }): (event: TEvent, ctx: TContext) => Promise<void> {
   return async function onSessionStart(event, ctx): Promise<void> {
+    if (deps.restoreSessionProfile && !deps.restoreSessionProfile()) {
+      deps.recordRuntimeEvent?.(
+        "session",
+        new Error("Telegram session replacement profile is unavailable."),
+        { phase: "telegram-new-profile-restore" },
+      );
+      return;
+    }
     try {
       await deps.refreshFollowerSession(event, ctx);
     } catch (error) {
@@ -103,6 +116,8 @@ export function createTelegramSessionStartHook<TEvent, TContext>(deps: {
 
 export function createTelegramSessionReplacementRuntime(deps: {
   sendTargetText: (target: TelegramTarget, text: string) => Promise<void>;
+  getActiveProfileName?: () => string | undefined;
+  activateProfile?: (profileName: string) => boolean;
   recordRuntimeEvent?: (
     category: string,
     error: unknown,
@@ -191,6 +206,7 @@ export function createTelegramSessionReplacementRuntime(deps: {
       setHandoff({
         requestId,
         target: requestedTarget,
+        profileName: deps.getActiveProfileName?.(),
         createdAtMs,
         expiresAtMs: createdAtMs + handoffTtlMs,
       });
@@ -202,6 +218,12 @@ export function createTelegramSessionReplacementRuntime(deps: {
       if (tasks.length === 0) return false;
       setImmediate(() => runDeferred(tasks));
       return true;
+    },
+    restoreProfile() {
+      const profileName = getFreshHandoff(getNowMs())?.profileName;
+      if (profileName === undefined) return true;
+      if (deps.getActiveProfileName?.() === profileName) return true;
+      return deps.activateProfile?.(profileName) ?? false;
     },
     async onSessionStart() {
       const handoff = getFreshHandoff(getNowMs());

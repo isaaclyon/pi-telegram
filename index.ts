@@ -554,6 +554,8 @@ export default function (pi: Pi.ExtensionAPI) {
     });
   const sessionReplacementRuntime =
     SessionReplacement.createTelegramSessionReplacementRuntime({
+      getActiveProfileName: configStore.getActiveProfileName,
+      activateProfile: configStore.activateProfile,
       async sendTargetText(target, text) {
         await sendTextReply(target.chatId, undefined, text, { target });
       },
@@ -1305,6 +1307,7 @@ export default function (pi: Pi.ExtensionAPI) {
     sessionLifecycleWithContext,
     {
       onSessionStart: SessionReplacement.createTelegramSessionStartHook({
+        restoreSessionProfile: sessionReplacementRuntime.restoreProfile,
         refreshFollowerSession: refreshTelegramFollowerSession,
         onSessionStart: sessionReplacementRuntime.onSessionStart,
         recordRuntimeEvent,

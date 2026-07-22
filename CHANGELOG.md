@@ -3,6 +3,7 @@
 ## Unreleased: Telegram `/new` Hardening
 
 - `[Fresh Sessions]` Added the guarded Telegram `/new` command, which consumes the command, preserves the exact `{ chatId, threadId? }` target, and delegates only through the optional narrow host capability for Pi's official session-replacement path. The command reports unavailable hosts and rejects busy, queued, compacting, or duplicate-replacement sessions.
+- `[Named Profiles]` The replacement handoff now captures the active named Telegram profile and restores it before follower refresh and completion delivery in the fresh extension runtime. Impact: `/new` from a named bot can no longer send its completion notice through the default profile's bot.
 - `[Scheduling]` Removed the replacement runtime's independent timer. Polling owners flush only after update-offset persistence, while followers flush only after forwarded inbound handling unwinds, preventing session replacement from racing persisted routing state.
 - `[Architecture]` Moved session-start composition into the owning replacement domain so `index.ts` remains a pure, arrow-free composition root; the runtime retains no `ExtensionContext`.
 - `[Validation]` Added command, host, replacement, follower, and polling regressions for command consumption, guard coverage, exact targets, cancellation, provider failure, unavailable hosts, offset ordering, and deferred invocation.

@@ -231,3 +231,51 @@ test("session start completes replacement even when follower refresh fails", asy
     "replacement-complete",
   ]);
 });
+
+test("named profile is restored before follower refresh and completion delivery", async () => {
+  clearGlobals();
+  const events: string[] = [];
+  let activeProfileName: string | undefined = "builder";
+  const dispose = registerTelegramHostNewSession(async () => ({ cancelled: false }));
+  const previousRuntime = createTelegramSessionReplacementRuntime({
+    getActiveProfileName: () => activeProfileName,
+    activateProfile: (profileName) => {
+      activeProfileName = profileName;
+      return true;
+    },
+    sendTargetText: async () => undefined,
+  });
+  previousRuntime.request({ chatId: 7, threadId: 42 });
+  previousRuntime.flushAfterUpdatePersisted();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  activeProfileName = undefined;
+  const freshRuntime = createTelegramSessionReplacementRuntime({
+    getActiveProfileName: () => activeProfileName,
+    activateProfile: (profileName) => {
+      events.push(`activate:${profileName}`);
+      activeProfileName = profileName;
+      return true;
+    },
+    sendTargetText: async (_target, text) => {
+      events.push(`send:${activeProfileName ?? "default"}:${text}`);
+    },
+  });
+  const hook = createTelegramSessionStartHook({
+    restoreSessionProfile: freshRuntime.restoreProfile,
+    refreshFollowerSession: async () => {
+      events.push(`refresh:${activeProfileName ?? "default"}`);
+    },
+    onSessionStart: freshRuntime.onSessionStart,
+  });
+
+  await hook("start", {});
+
+  assert.deepEqual(events, [
+    "activate:builder",
+    "refresh:builder",
+    "send:builder:✅ New session started in this thread.",
+  ]);
+  dispose();
+  clearGlobals();
+});
