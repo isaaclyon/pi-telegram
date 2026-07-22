@@ -121,11 +121,14 @@ export function createTelegramBusAwareApiRuntime(
     ): Promise<TelegramUpdate[]> {
       return deps.directRuntime.getUpdates(body, signal);
     },
-    setMyCommands(commands): Promise<boolean> {
+    setMyCommands(commands, scope): Promise<boolean> {
       return deps.ownsDirect()
-        ? deps.directRuntime.setMyCommands(commands)
+        ? deps.directRuntime.setMyCommands(commands, scope)
         : deps
-            .callFollowerApi("call", ["setMyCommands", { commands }])
+            .callFollowerApi("call", [
+              "setMyCommands",
+              { commands, ...(scope ? { scope } : {}) },
+            ])
             .then(asBoolean);
     },
     sendChatAction(

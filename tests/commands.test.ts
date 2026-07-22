@@ -301,6 +301,20 @@ test("Command helpers register Telegram bot commands through deps", async () => 
   assert.deepEqual(calls, [TELEGRAM_BOT_COMMANDS, TELEGRAM_BOT_COMMANDS]);
 });
 
+test("Command helpers scope the household command menu to the allowlisted chat", async () => {
+  const calls: unknown[] = [];
+  const scope = { type: "chat" as const, chat_id: -100123 };
+
+  await registerTelegramBotCommands({
+    getScope: () => scope,
+    setMyCommands: async (commands, selectedScope) => {
+      calls.push({ commands, scope: selectedScope });
+    },
+  });
+
+  assert.deepEqual(calls, [{ commands: TELEGRAM_BOT_COMMANDS, scope }]);
+});
+
 test("Command helpers keep extension Telegram bot commands hidden by default", async () => {
   clearTelegramExtensionCommands();
   const dispose = registerTelegramCommand({
