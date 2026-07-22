@@ -10,7 +10,10 @@ import * as Commands from "./commands.ts";
 import type { TelegramConfigStore } from "./config.ts";
 import type { TelegramSectionRegistry } from "./sections.ts";
 import type { TelegramInboundHandlerRuntime } from "./inbound.ts";
-import { getTelegramHostHouseholdActorLabel } from "./host.ts";
+import {
+  getTelegramHostHouseholdActorLabel,
+  getTelegramHostHouseholdGroup,
+} from "./host.ts";
 import * as Media from "./media.ts";
 import * as Menu from "./menu.ts";
 import * as Model from "./model.ts";
@@ -636,6 +639,7 @@ const TELEGRAM_OWNED_CALLBACK_PREFIXES = [
   TELEGRAM_ALL_TAB_MENU_CALLBACK_PREFIX,
   TELEGRAM_UNBOUND_REROUTE_CALLBACK_PREFIX,
   "compact:",
+  "new:",
   "menu:",
   "model:",
   "queue:",
@@ -1417,6 +1421,27 @@ export function createTelegramInboundRouteRuntime<
         },
       });
     if (handledByCompact) return;
+    const handledByNewSession =
+      await Commands.handleTelegramNewSessionConfirmationCallback(query, {
+        isIdle: () => deps.isIdle(ctx),
+        hasPendingMessages: () => deps.hasPendingMessages(ctx),
+        hasActiveTelegramTurn: deps.activeTurnRuntime.has,
+        hasDispatchPending: deps.bridgeRuntime.lifecycle.hasDispatchPending,
+        hasQueuedTelegramItems: deps.telegramQueueStore.hasQueuedItems,
+        isCompactionInProgress:
+          deps.bridgeRuntime.lifecycle.isCompactionInProgress,
+        hasPendingSessionReplacement:
+          deps.hasPendingSessionReplacement ?? (() => false),
+        requestNewSession:
+          deps.requestNewSession ??
+          (() => ({
+            accepted: false,
+            reason: "New session is unavailable from this Pi host.",
+          })),
+        answerCallbackQuery: deps.answerCallbackQuery,
+        editInteractiveMessage: deps.editInteractiveMessage ?? (async () => {}),
+      });
+    if (handledByNewSession) return;
     const handledByQueue = await deps.queueMenuCallbackHandler(query, ctx);
     if (handledByQueue) return;
     const handledBySettings = await deps.settingsMenuCallbackHandler?.(
@@ -1572,6 +1597,8 @@ export function createTelegramInboundRouteRuntime<
         accepted: false,
         reason: "New session is unavailable from this Pi host.",
       })),
+    requiresNewSessionConfirmation: () =>
+      getTelegramHostHouseholdGroup() !== undefined,
     setCompactionInProgress:
       deps.bridgeRuntime.lifecycle.setCompactionInProgress,
     updateStatus: deps.updateStatus,

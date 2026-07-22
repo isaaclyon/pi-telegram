@@ -31,6 +31,7 @@ import {
   handleTelegramCompactConfirmationCallback,
   handleTelegramModelCommand,
   handleTelegramNewSessionCommand,
+  handleTelegramNewSessionConfirmationCallback,
   handleTelegramStatusCommand,
   handleTelegramStopCommand,
   parseTelegramCommand,
@@ -140,6 +141,75 @@ test("/new consumes the command, preserves its exact target, and acknowledges ac
   });
   assert.deepEqual(targets, [{ chatId: 41, threadId: 73 }]);
   assert.deepEqual(replies, ["🆕 Starting a new session in this thread."]);
+});
+
+test("/new requires an explicit household confirmation before replacing shared history", async () => {
+  const replies: string[] = [];
+  const confirmations: Array<{ chatId: number; threadId?: number }> = [];
+  let requests = 0;
+  await handleTelegramNewSessionCommand(
+    { chat: { id: -100123 }, message_id: 9 },
+    {
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      hasActiveTelegramTurn: () => false,
+      hasDispatchPending: () => false,
+      hasQueuedTelegramItems: () => false,
+      isCompactionInProgress: () => false,
+      hasPendingSessionReplacement: () => false,
+      requestNewSession: () => {
+        requests += 1;
+        return { accepted: true };
+      },
+      getMessageTarget: getTelegramNewSessionMessageTarget,
+      requiresConfirmation: () => true,
+      sendConfirmation: async (target) => {
+        confirmations.push(target);
+      },
+      sendTextReply: async (text) => {
+        replies.push(text);
+      },
+    },
+  );
+  assert.equal(requests, 0);
+  assert.deepEqual(confirmations, [{ chatId: -100123, threadId: undefined }]);
+  assert.deepEqual(replies, []);
+});
+
+test("household /new confirmation requests replacement only after authorized callback", async () => {
+  const edits: string[] = [];
+  const answers: string[] = [];
+  const targets: Array<{ chatId: number; threadId?: number }> = [];
+  const handled = await handleTelegramNewSessionConfirmationCallback(
+    {
+      id: "callback-1",
+      data: "new:confirm",
+      message: { chat: { id: -100123 }, message_id: 44 },
+    },
+    {
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      hasActiveTelegramTurn: () => false,
+      hasDispatchPending: () => false,
+      hasQueuedTelegramItems: () => false,
+      isCompactionInProgress: () => false,
+      hasPendingSessionReplacement: () => false,
+      requestNewSession: (target) => {
+        targets.push(target);
+        return { accepted: true };
+      },
+      answerCallbackQuery: async (id) => {
+        answers.push(id);
+      },
+      editInteractiveMessage: async (_chatId, _messageId, text) => {
+        edits.push(text);
+      },
+    },
+  );
+  assert.equal(handled, true);
+  assert.deepEqual(targets, [{ chatId: -100123 }]);
+  assert.deepEqual(answers, ["callback-1"]);
+  assert.deepEqual(edits, ["🆕 Starting a new shared session."]);
 });
 
 test("/new rejects every required busy guard before requesting replacement", async () => {

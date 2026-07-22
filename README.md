@@ -77,6 +77,8 @@ A host may replace personal pairing with exactly one private Telegram group shar
 - preserves the group target and actor identity through queue persistence, edits, media grouping, buttons, replay, and replies;
 - disables personal pairing, Guest Mode admission, and private-chat Threaded Mode for that bot runtime.
 
+Because both household actors share one Pi history, `/new` is confirmation-gated in this mode: the command posts an inline warning and only an authorized `Start shared session` callback requests replacement. Personal-DM `/new` remains immediate after its existing idle/queue safety checks.
+
 Create the shared bot with BotFather, add it to the intended private group, and decide whether it should receive ordinary messages. Telegram privacy mode enabled means the bot generally sees commands, mentions, and replies; use BotFather `/setprivacy` → **Disable** only if the household wants every ordinary group message to reach the bot. A basic group may migrate to a supergroup and receive a new chat id; the bridge deliberately fails closed after migration until the host policy is updated and the runtime is restarted. Tokens and numeric ids are never rendered in status output.
 
 ## What It Feels Like

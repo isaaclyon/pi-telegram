@@ -36,6 +36,7 @@ Keep this boundary explicit:
 - Do not treat Telegram as a generic remote shell for every Pi slash command.
 - Telegram `/new` uses only the optional narrow host-registered `registerTelegramHostNewSession` capability. The host provider must invoke Pi's official session-replacement path; pi-telegram retains no `ExtensionContext` and reports unavailable when the provider is absent.
 - A trusted host may register exactly one household group plus exactly two actor ids and stable labels before extension imports execute. This policy replaces personal pairing for that runtime: default routing authorizes exact target plus exact actor, keeps one shared session/queue, and disables Guest Mode and private-chat Threaded Mode. It is not a user-editable `telegram.json` setting.
+- Household `/new` renders a group-targeted inline confirmation and accepts only an authorized callback before requesting host session replacement. Confirmation re-evaluates all ordinary replacement guards; classic personal mode preserves immediate `/new` behavior.
 - A separate PTY supervisor or daemon could choose to own those risks, but that would be a different product mode rather than this extension's runtime contract.
 
 The repository uses a **Flat Domain DAG**:
