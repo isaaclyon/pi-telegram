@@ -16,6 +16,7 @@ import * as Config from "./lib/config.ts";
 import * as Threads from "./lib/threads.ts";
 import * as Inbound from "./lib/inbound.ts";
 import * as Inbox from "./lib/inbox.ts";
+import * as Host from "./lib/host.ts";
 import * as Lifecycle from "./lib/lifecycle.ts";
 import * as Locks from "./lib/locks.ts";
 import * as Media from "./lib/media.ts";
@@ -139,7 +140,7 @@ export default function (pi: Pi.ExtensionAPI) {
   configStoreForRedaction = configStore;
   getRuntimeLogProfileName = configStore.getActiveProfileName;
   const isTelegramBusConfigured = function (): boolean {
-    return true;
+    return Host.isTelegramHostPrivateChatThreadedModeAllowed();
   };
   const isTelegramBusRuntimeEnabled = function (): boolean {
     return isTelegramBusConfigured() && !telegramTopicModeUnavailable;
@@ -316,6 +317,7 @@ export default function (pi: Pi.ExtensionAPI) {
     Queue.TelegramQueueItem<Pi.ExtensionContext>
   >({
     getConfig: configStore.get,
+    getAuthorizationSurface: Host.getTelegramHostHouseholdStatus,
     getActiveProfileName: configStore.getActiveProfileName,
     getDiagnosticPaths: Paths.getTelegramDiagnosticsDisplayPaths,
     isPollingActive: Polling.createTelegramPollingActivityReader(

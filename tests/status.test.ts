@@ -5,7 +5,6 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import {
   buildTelegramBridgeStatusLines,
   buildTelegramRuntimeEventLines,
@@ -611,6 +610,43 @@ test("Bridge status runtime builds status state from live ports", () => {
     "- logs: ~/.pi/agent/tmp/telegram/logs.jsonl",
     "- full dump: /telegram-status --debug",
   ]);
+});
+
+test("Bridge status treats a household group policy as configured authorization", () => {
+  const events: string[] = [];
+  const runtime = createTelegramBridgeStatusRuntime({
+    getConfig: () => ({ botToken: "123:secret", botUsername: "shared_bot" }),
+    getAuthorizationSurface: () => ({
+      kind: "household-group",
+      actorLabels: ["Isaac", "Emma"],
+    }),
+    isPollingActive: () => true,
+    getActiveSourceMessageIds: () => undefined,
+    hasActiveTurn: () => false,
+    hasDispatchPending: () => false,
+    isCompactionInProgress: () => false,
+    getActiveToolExecutions: () => 0,
+    hasPendingModelSwitch: () => false,
+    getQueuedItems: () => [],
+    formatQueuedStatus: () => "",
+    getRecentRuntimeEvents: () => [],
+  });
+  runtime.updateStatus({
+    ui: {
+      theme: {
+        fg: (token: string, text: string) => `<${token}>${text}</${token}>`,
+      },
+      setStatus: (_key: string, text: string) => events.push(text),
+    },
+  });
+  assert.match(events[0] ?? "", /connected/);
+  assert.doesNotMatch(events[0] ?? "", /awaiting pairing/);
+  const lines = runtime.getStatusLines();
+  assert.ok(lines.includes("- surface: household group"));
+  assert.ok(lines.includes("- authorized actors: Isaac, Emma"));
+  assert.equal(lines.some((line) => line.includes("101")), false);
+  assert.equal(lines.some((line) => line.includes("202")), false);
+  assert.equal(lines.some((line) => line.includes("123:secret")), false);
 });
 
 test("Bridge status lines render named-profile diagnostic paths", () => {

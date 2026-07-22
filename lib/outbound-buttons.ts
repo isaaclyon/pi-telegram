@@ -183,12 +183,18 @@ export function createTelegramButtonPromptTurn(options: {
   queueOrder: number;
   action: TelegramOutboundButtonAction;
   target?: TelegramQueueTarget;
+  actor?: { userId: number; label: string };
 }): PendingTelegramTurn {
-  const prompt = `[telegram] ${options.action.prompt}`;
+  const actor = options.actor;
+  const prefix = actor ? `[telegram|actor:${actor.label}]` : "[telegram]";
+  const prompt = `${prefix} ${options.action.prompt}`;
   return {
     kind: "prompt",
     chatId: options.chatId,
     ...(options.target ? { target: options.target } : {}),
+    ...(actor
+      ? { actorLabel: actor.label, actorUserId: actor.userId }
+      : {}),
     replyToMessageId: options.replyToMessageId,
     sourceMessageIds: [options.replyToMessageId],
     queueOrder: options.queueOrder,

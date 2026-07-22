@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { resolveAgentDir, resolveTelegramConfigPath } from "./paths.ts";
+import { getTelegramHostHouseholdTarget } from "./host.ts";
 
 import type { TelegramInboundHandlerConfig } from "./inbound.ts";
 import type { CommandTemplateObjectConfig } from "./command-templates.ts";
@@ -605,7 +606,10 @@ export function createTelegramProactivePushChatIdGetter(deps: {
   getActiveTurnChatId: () => number | undefined;
   getAllowedUserId: () => number | undefined;
 }): () => number | undefined {
-  return () => deps.getActiveTurnChatId() ?? deps.getAllowedUserId();
+  return () =>
+    deps.getActiveTurnChatId() ??
+    getTelegramHostHouseholdTarget()?.chatId ??
+    deps.getAllowedUserId();
 }
 
 export function createTelegramProactivePushTargetGetter(deps: {
@@ -618,6 +622,8 @@ export function createTelegramProactivePushTargetGetter(deps: {
     if (activeTarget) return activeTarget;
     const assignedTarget = deps.getAssignedTarget();
     if (assignedTarget) return assignedTarget;
+    const householdTarget = getTelegramHostHouseholdTarget();
+    if (householdTarget) return householdTarget;
     const chatId = deps.getAllowedUserId();
     return typeof chatId === "number" ? { chatId } : undefined;
   };

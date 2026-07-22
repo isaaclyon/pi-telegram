@@ -183,6 +183,10 @@ export interface TelegramBridgeStatusLineState {
   activeProfileName?: string;
   diagnosticPaths?: { state: string; logs: string };
   allowedUserId?: number;
+  authorizationSurface?: {
+    kind: "household-group";
+    actorLabels: readonly string[];
+  };
   botThreadMode?: "unknown" | "enabled" | "disabled";
   botThreadModeUpdatedAtMs?: number;
   botThreadModeAction?: string;
@@ -259,6 +263,9 @@ export interface TelegramBridgeStatusRuntimeDeps<
 > {
   statusKey?: string;
   getConfig: () => TelegramBridgeStatusConfig;
+  getAuthorizationSurface?: () =>
+    | { kind: "household-group"; actorLabels: readonly string[] }
+    | undefined;
   getActiveProfileName?: () => string | undefined;
   getDiagnosticPaths?: (
     profileName?: string,
@@ -590,6 +597,7 @@ export function createTelegramBridgeStatusRuntime<
     getStatusBarState: (_ctx, error) => {
       const config = deps.getConfig();
       const queuedItems = deps.getQueuedItems();
+      const authorizationSurface = deps.getAuthorizationSurface?.();
       const hasActiveTurn = deps.hasActiveTurn();
       const hasPendingDispatch = deps.hasDispatchPending();
       const hasPendingModelSwitch = deps.hasPendingModelSwitch();
@@ -598,7 +606,7 @@ export function createTelegramBridgeStatusRuntime<
       return {
         hasBotToken: !!config.botToken,
         pollingActive: deps.isPollingActive(),
-        paired: !!config.allowedUserId,
+        paired: !!config.allowedUserId || authorizationSurface !== undefined,
         busRole: deps.getBusRole?.(),
         busLifecyclePhase: deps.getBusLifecyclePhase?.(),
         instanceSlot: deps.getInstanceSlot?.(),
@@ -625,12 +633,14 @@ export function createTelegramBridgeStatusRuntime<
       const config = deps.getConfig();
       const botThreadMode = deps.getBotThreadMode?.();
       const activeProfileName = deps.getActiveProfileName?.();
+      const authorizationSurface = deps.getAuthorizationSurface?.();
       return {
         hasBotToken: Boolean(config.botToken),
         botUsername: config.botUsername,
         activeProfileName,
         diagnosticPaths: deps.getDiagnosticPaths?.(activeProfileName),
         allowedUserId: config.allowedUserId,
+        authorizationSurface,
         botThreadMode: botThreadMode?.threadMode,
         botThreadModeUpdatedAtMs: botThreadMode?.updatedAtMs,
         botThreadModeAction: botThreadMode?.lastReconcileAction,
@@ -1074,11 +1084,17 @@ function buildTelegramBridgeCompactStatusLines(
     state: `~/.pi/agent/tmp/telegram/state${profileSuffix}.json`,
     logs: `~/.pi/agent/tmp/telegram/logs${profileSlug ? `.${profileSlug}` : ""}.jsonl`,
   };
+  const household = state.authorizationSurface;
   return [
     "connection:",
     `- bot: ${formatTelegramBridgeBotStatus(state)}`,
     ...(state.activeProfileName ? [`- profile: ${state.activeProfileName}`] : []),
-    `- user: ${state.allowedUserId ?? "not paired"}`,
+    ...(household
+      ? [
+          "- surface: household group",
+          `- authorized actors: ${household.actorLabels.join(", ")}`,
+        ]
+      : [`- user: ${state.allowedUserId ?? "not paired"}`]),
     ...(state.botThreadMode ? [`- thread mode: ${state.botThreadMode}`] : []),
     ...(state.busRole ? [`- role: ${state.busRole}`] : []),
     ...(state.busLifecyclePhase
@@ -1129,11 +1145,17 @@ export function buildTelegramBridgeDiagnosticStatusLines(
   const defaultQueueCount = state.queuedItems.filter(
     (item) => item.queueLane === "default",
   ).length;
+  const household = state.authorizationSurface;
   return [
     "connection:",
     `- bot: ${formatTelegramBridgeBotStatus(state)}`,
     ...(state.activeProfileName ? [`- profile: ${state.activeProfileName}`] : []),
-    `- allowed user: ${state.allowedUserId ?? "not paired"}`,
+    ...(household
+      ? [
+          "- surface: household group",
+          `- authorized actors: ${household.actorLabels.join(", ")}`,
+        ]
+      : [`- allowed user: ${state.allowedUserId ?? "not paired"}`]),
     ...(state.botThreadMode
       ? [
           `- thread mode: ${state.botThreadMode}${state.botThreadModeAction ? ` reconcile=${state.botThreadModeAction}` : ""}`,

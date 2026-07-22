@@ -2,6 +2,20 @@
 
 _This backlog tracks only open release-relevant work: live promoted-follower verification, evidence-gated Telegram client/runtime follow-ups, and upstream Pi API blockers. Completed validation evidence belongs in `CHANGELOG.md`, not in this queue._
 
+## P1 — Household Group Live Verification
+
+Context: deterministic coverage now protects the host-authorized one-group/two-actor boundary, stable attribution, target preservation, durable replay authorization, and personal-mode compatibility. Live Telegram evidence is still required for client/Bot API behavior and the operational BotFather setup.
+
+Open work:
+
+- [ ] Configure a dedicated shared bot, deliberately choose BotFather privacy mode, add it to one private Isaac/Emma group, and register the exact group and actor ids through the host without placing them in repository config.
+- [ ] Verify Isaac and Emma text, reply, edit, media/album, button callback, reaction, final reply, file, and voice flows remain in the group with the correct stable actor attribution.
+- [ ] Verify DMs, a second group, an outsider, a bot actor, and anonymous-admin/channel-authored updates remain silent and create no durable inbox entries.
+- [ ] Exercise a basic-group-to-supergroup migration and confirm the old policy fails closed until the host chat id is updated and the bridge restarts.
+- [ ] Capture redacted status and runtime diagnostics proving the household surface and labels are visible without tokens or numeric ids.
+
+Done when: both household actors can use the shared group across the ordinary input/output surface, every negative authorization case remains silent, migration recovery is documented from live evidence, and no personal-mode regression appears.
+
 ## P1 — Guest Media Live Follow-Ups
 
 Context: 0.20.5 shipped deterministic Guest Mode file/audio delivery coverage. Post-release private-DM smoke confirmed that one local document reaches the remote conversation through `answerGuestQuery`; remaining checks validate Telegram client behavior rather than gate the implemented transport.

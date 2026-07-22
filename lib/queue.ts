@@ -86,6 +86,10 @@ export interface TelegramQueueItemBase {
 
 export interface PendingTelegramTurn extends TelegramQueueItemBase {
   kind: "prompt";
+  /** Stable host-owned actor label for an authorized multi-actor surface. */
+  actorLabel?: string;
+  /** Telegram user id paired with actorLabel for durable re-authorization. */
+  actorUserId?: number;
   sourceMessageIds: number[];
   queuedAttachments: QueuedAttachment[];
   content: TelegramPromptContent[];
