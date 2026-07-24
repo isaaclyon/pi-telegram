@@ -569,6 +569,27 @@ export default function (pi: Pi.ExtensionAPI) {
       getBlockingReason: newSessionReadiness,
       recordRuntimeEvent,
     });
+  const getHostSessionReplacementBlockingReason = (
+    trigger: "manual" | "telegram" | `job:${string}`,
+  ): string | undefined => {
+    const ctx = telegramSessionContextStore.get();
+    if (!ctx) return "Cannot replace the session without an active Pi session.";
+    const reason = Commands.getTelegramNewSessionBlockingReason({
+      idle: isIdle(ctx),
+      pendingMessages: hasPendingMessages(ctx),
+      activeTelegramTurn: activeTurnRuntime.has(),
+      dispatchPending: lifecycle.hasDispatchPending(),
+      // The Telegram trigger itself remains queued during preparation. Jobs
+      // and manual replacement must not cross any queued Telegram work.
+      queuedTelegramItems:
+        trigger === "telegram" ? false : telegramQueueStore.hasQueuedItems(),
+      compactionInProgress: lifecycle.isCompactionInProgress(),
+    });
+    if (reason) return reason;
+    return trigger !== "manual" && sessionReplacementRuntime.isPending()
+      ? "A new session replacement is already pending."
+      : undefined;
+  };
   const dispatchNextQueuedTelegramTurn =
     Queue.createTelegramQueueDispatchRuntime({
       ...telegramQueueStore,
@@ -1302,10 +1323,15 @@ export default function (pi: Pi.ExtensionAPI) {
     stopPolling: suspendTelegramForSessionReplacement,
     recordRuntimeEvent,
   });
+  let unregisterHostSessionReplacementGuard: () => void = () => {};
   const baseSessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
     queueSessionLifecycle,
     {
       async onSessionStart(event, ctx) {
+        unregisterHostSessionReplacementGuard =
+          Host.registerTelegramHostSessionReplacementGuard(({ trigger }) =>
+            getHostSessionReplacementBlockingReason(trigger),
+          );
         await lockedPollingRuntime.onSessionStart(event, ctx);
         if (!telegramInboxReplayed) {
           telegramInboxReplayed = true;
@@ -1319,6 +1345,8 @@ export default function (pi: Pi.ExtensionAPI) {
         queueDispatchWatchdogRuntime.start(ctx);
       },
       async onSessionShutdown() {
+        unregisterHostSessionReplacementGuard();
+        unregisterHostSessionReplacementGuard = () => {};
         queueDispatchWatchdogRuntime.stop();
         telegramThreadCapabilityMonitor.stop();
       },

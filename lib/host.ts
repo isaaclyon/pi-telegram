@@ -22,6 +22,14 @@ export type TelegramHostPromptPreparation = (
   input: TelegramHostPromptPreparationInput,
 ) => Promise<TelegramHostPromptPreparationResult>;
 
+export interface TelegramHostSessionReplacementGuardInput {
+  trigger: "manual" | "telegram" | `job:${string}`;
+}
+
+export type TelegramHostSessionReplacementGuard = (
+  input: TelegramHostSessionReplacementGuardInput,
+) => string | undefined;
+
 export interface TelegramHostHouseholdActor {
   userId: number;
   label: string;
@@ -46,6 +54,8 @@ interface TelegramHostRegistry {
   householdToken?: object;
   promptPreparation?: TelegramHostPromptPreparation;
   promptPreparationToken?: object;
+  replacementGuard?: TelegramHostSessionReplacementGuard;
+  replacementGuardToken?: object;
 }
 
 const TELEGRAM_HOST_REGISTRY_KEY = Symbol.for(
@@ -61,6 +71,8 @@ function isTelegramHostRegistry(value: unknown): value is TelegramHostRegistry {
   const householdToken = candidate.householdToken;
   const promptPreparation = candidate.promptPreparation;
   const promptPreparationToken = candidate.promptPreparationToken;
+  const replacementGuard = candidate.replacementGuard;
+  const replacementGuardToken = candidate.replacementGuardToken;
   if (candidate.version !== 1) return false;
   if (provider !== undefined && typeof provider !== "function") return false;
   if (token !== undefined && (!token || typeof token !== "object")) {
@@ -92,11 +104,21 @@ function isTelegramHostRegistry(value: unknown): value is TelegramHostRegistry {
   ) {
     return false;
   }
+  if (replacementGuard !== undefined && typeof replacementGuard !== "function") {
+    return false;
+  }
+  if (
+    replacementGuardToken !== undefined &&
+    (!replacementGuardToken || typeof replacementGuardToken !== "object")
+  ) {
+    return false;
+  }
   return (
     (provider === undefined) === (token === undefined) &&
     (householdGroup === undefined) === (householdToken === undefined) &&
     (promptPreparation === undefined) ===
-      (promptPreparationToken === undefined)
+      (promptPreparationToken === undefined) &&
+    (replacementGuard === undefined) === (replacementGuardToken === undefined)
   );
 }
 
@@ -192,6 +214,32 @@ export async function prepareTelegramHostPrompt(): Promise<TelegramHostPromptPre
   } finally {
     promptPreparationsInFlight -= 1;
   }
+}
+
+export function registerTelegramHostSessionReplacementGuard(
+  guard: TelegramHostSessionReplacementGuard,
+): () => void {
+  if (typeof guard !== "function") {
+    throw new TypeError("Telegram session replacement guard must be a function");
+  }
+  const registry = getTelegramHostRegistry();
+  if (registry.replacementGuard) {
+    throw new Error("Telegram session replacement guard is already registered");
+  }
+  const token = {};
+  registry.replacementGuard = guard;
+  registry.replacementGuardToken = token;
+  return () => {
+    if (registry.replacementGuardToken !== token) return;
+    delete registry.replacementGuard;
+    delete registry.replacementGuardToken;
+  };
+}
+
+export function getTelegramHostSessionReplacementGuard():
+  | TelegramHostSessionReplacementGuard
+  | undefined {
+  return getTelegramHostRegistry().replacementGuard;
 }
 
 function validateTelegramHostHouseholdGroup(

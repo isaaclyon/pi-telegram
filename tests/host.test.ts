@@ -15,7 +15,9 @@ import {
 import {
   getTelegramHostHouseholdGroup,
   getTelegramHostPromptPreparation,
+  getTelegramHostSessionReplacementGuard,
   isTelegramHostPrivateChatThreadedModeAllowed,
+  registerTelegramHostSessionReplacementGuard,
 } from "../lib/host.ts";
 
 const REGISTRY_KEY = Symbol.for("pi-telegram.host-capability-registry");
@@ -78,6 +80,24 @@ test("host prompt preparation registration is narrow and identity-safe", async (
   assert.deepEqual(calls, ["telegram"]);
   dispose();
   assert.equal(getTelegramHostPromptPreparation(), undefined);
+  clearHostRegistry();
+});
+
+test("session replacement guard exposes only a bounded blocking reason", () => {
+  clearHostRegistry();
+  const dispose = registerTelegramHostSessionReplacementGuard(({ trigger }) =>
+    trigger.startsWith("job:") ? "Telegram work is queued." : undefined,
+  );
+  assert.equal(
+    getTelegramHostSessionReplacementGuard()?.({ trigger: "job:cron" }),
+    "Telegram work is queued.",
+  );
+  assert.equal(
+    getTelegramHostSessionReplacementGuard()?.({ trigger: "telegram" }),
+    undefined,
+  );
+  dispose();
+  assert.equal(getTelegramHostSessionReplacementGuard(), undefined);
   clearHostRegistry();
 });
 
