@@ -238,6 +238,7 @@ Companion extensions can integrate with Telegram without owning polling or trans
 
 - Register Telegram slash commands.
 - Add menu sections and settings surfaces.
+- Open registered sections directly from slash commands or active-turn companion workflows without queueing a model turn.
 - Add compact status rows.
 - Handle update/callback namespaces.
 - Provide inbound preprocessing handlers.

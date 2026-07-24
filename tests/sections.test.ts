@@ -7,10 +7,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createTelegramExtensionSectionRegistry,
+  bindTelegramSectionPresenter,
   getTelegramExtensionSettingsRows,
   getTelegramSectionMainMenuRows,
   parseTelegramSectionCallback,
   handleTelegramSectionOpen,
+  openTelegramSection,
+  presentTelegramSection,
   handleTelegramSectionCallback,
   handleTelegramSectionSettingsOpen,
   type TelegramSectionRegistration,
@@ -310,6 +313,69 @@ test("handleTelegramSectionOpen renders section view with back row", async () =>
   assert.equal(markup.inline_keyboard[0][0].callback_data, "menu:back");
   // Second row is the section's own button
   assert.equal(markup.inline_keyboard[1][0].text, "Do");
+});
+
+test("openTelegramSection sends a standalone interactive section view", async () => {
+  const registry = createTelegramExtensionSectionRegistry();
+  registry.register(
+    stubSection("@test/a", "A", {
+      render: async (ctx) => ({
+        text: "<b>Direct</b>",
+        replyMarkup: {
+          inline_keyboard: [[{
+            text: "Next",
+            callback_data: ctx.callbackData("next", "payload"),
+          }]],
+        },
+      }),
+    }),
+  );
+  let sent:
+    | {
+        chatId: number;
+        text: string;
+        callbackData: string;
+        target?: { chatId: number; threadId?: number };
+      }
+    | undefined;
+  const deps = stubDeps({
+    target: { chatId: 123, threadId: 9 },
+    sendInteractiveMessage: async (chatId, text, _mode, markup, options) => {
+      sent = {
+        chatId,
+        text,
+        callbackData: markup.inline_keyboard[0]?.[0]?.callback_data ?? "",
+        target: options?.target,
+      };
+      return 456;
+    },
+  });
+
+  await openTelegramSection(registry, "@test/a", 123, deps);
+
+  assert.deepEqual(sent, {
+    chatId: 123,
+    text: "<b>Direct</b>",
+    callbackData: "section:0:next:payload",
+    target: { chatId: 123, threadId: 9 },
+  });
+});
+
+test("presentTelegramSection delegates through the active runtime presenter", async () => {
+  const calls: string[] = [];
+  const unbind = bindTelegramSectionPresenter(async (sectionId) => {
+    calls.push(sectionId);
+  });
+  try {
+    await presentTelegramSection("@test/a");
+    assert.deepEqual(calls, ["@test/a"]);
+  } finally {
+    unbind();
+  }
+  await assert.rejects(
+    presentTelegramSection("@test/a"),
+    /presenter is unavailable/,
+  );
 });
 
 test("section callbackData rejects payloads above Telegram's byte limit", async () => {

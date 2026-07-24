@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased: Direct Section Presentation
+
+- Let registered Telegram commands open companion sections directly, and let active-turn companion workflows present registered sections without an agent round trip.
+
 ## Unreleased: Host Prompt Preparation
 
 - `[Host Interop]` Added an optional narrow host prompt-preparation capability that runs immediately before a queued Telegram prompt enters Pi and reports whether it replaced the session. The capability receives only the Telegram trigger kind and exposes no Pi runtime or prompt content.
