@@ -195,6 +195,11 @@ A dispatched prompt remains queued until `agent_start` consumes it. This keeps t
 
 If the trusted host registers prompt preparation, dispatch awaits it before calling `sendUserMessage`. The complete prompt remains in the queue and durable inbox during that wait. Preparation rejection leaves it available for watchdog retry; a reported session replacement stops the old dispatcher and lets the fresh runtime replay the durable turn. Shutdown-time queue clearing does not reconcile that one in-flight preparation away. This is the narrow asynchronous seam used by hosts that need a lifecycle decision without exposing Pi internals or prompt content to the capability.
 
+Durable inbox replay runs on every session start and is idempotent by the stable
+chat/source-message turn key. This lets same-process replacement recover the
+triggering turn immediately without duplicating a turn already admitted by
+polling or an earlier replay.
+
 For the lifetime of each extension session, pi-telegram also publishes the same bounded replacement-readiness decision used by `/new`. Host-injected work must consult it before replacement. Jobs are blocked by any queued Telegram item; Telegram preparation ignores only queue occupancy because its own triggering turn intentionally remains there, while every other idle, pending-message, active-turn, pending-dispatch, compaction, and replacement guard still applies.
 
 Post-agent-end queue dispatch uses a session-bound deferred dispatcher. It is activated on session start, clears timers on shutdown, and skips callbacks from older generations before touching `ExtensionContext`. Dispatch stays session-bound after polling ownership moves elsewhere. Queued Telegram prompts are forwarded as normal user turns only after every readiness and optional host-preparation guard succeeds.

@@ -227,7 +227,18 @@ export function replayTelegramInboundInbox<TContext>(
   },
 ): number {
   if (!inbox) return 0;
-  const turns = loadTelegramInboundInboxTurns(inbox).filter(authorize);
+  const existingKeys = new Set(
+    store.getQueuedItems().flatMap((item) =>
+      isPendingTelegramTurn(item) ? [telegramInboundTurnKey(item)] : [],
+    ),
+  );
+  const turns = loadTelegramInboundInboxTurns(inbox).filter((turn) => {
+    if (!authorize(turn)) return false;
+    const key = telegramInboundTurnKey(turn);
+    if (existingKeys.has(key)) return false;
+    existingKeys.add(key);
+    return true;
+  });
   if (!turns.length) return 0;
   store.setQueuedItems([...store.getQueuedItems(), ...turns]);
   return turns.length;

@@ -230,7 +230,6 @@ export default function (pi: Pi.ExtensionAPI) {
   const telegramQueueStore = Inbox.withTelegramInboundInboxPersistence(
     Queue.createTelegramQueueStore<Pi.ExtensionContext>(),
   );
-  let telegramInboxReplayed = false;
   const deferredQueueDispatchRuntime =
     Queue.createTelegramDeferredQueueDispatchRuntime<Pi.ExtensionContext>({
       delayMs: 50,
@@ -1333,14 +1332,11 @@ export default function (pi: Pi.ExtensionAPI) {
             getHostSessionReplacementBlockingReason(trigger),
           );
         await lockedPollingRuntime.onSessionStart(event, ctx);
-        if (!telegramInboxReplayed) {
-          telegramInboxReplayed = true;
-          const replayed = Inbox.replayTelegramInboundInbox(
-            telegramQueueStore,
-            Inbox.getTelegramInboundInbox(),
-          );
-          if (replayed > 0) queueMutationRuntime.reorder(ctx);
-        }
+        const replayed = Inbox.replayTelegramInboundInbox(
+          telegramQueueStore,
+          Inbox.getTelegramInboundInbox(),
+        );
+        if (replayed > 0) queueMutationRuntime.reorder(ctx);
         telegramThreadCapabilityMonitor.start(ctx);
         queueDispatchWatchdogRuntime.start(ctx);
       },

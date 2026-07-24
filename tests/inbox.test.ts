@@ -229,6 +229,16 @@ test("replay seeds pending turns and returns the count", () => {
   assert.equal(replayTelegramInboundInbox(createTelegramQueueStore(), undefined), 0);
 });
 
+test("replay is idempotent when the same durable turn is already queued", () => {
+  const inbox = createFakeInbox();
+  const existing = makeTurn(7, [10], "already admitted");
+  reconcileTelegramInboundInbox(inbox, [existing], 1);
+  const store = createTelegramQueueStore([existing]);
+
+  assert.equal(replayTelegramInboundInbox(store, inbox), 0);
+  assert.deepEqual(store.getQueuedItems(), [existing]);
+});
+
 test("replay can re-authorize durable household turns before queue admission", () => {
   const inbox = createFakeInbox();
   const store = createTelegramQueueStore();

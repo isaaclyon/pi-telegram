@@ -6,6 +6,7 @@
 - `[Queue Reliability]` Prompt dispatch now remains queued and durable while asynchronous host preparation is pending, blocks duplicate dispatchers, retries preparation failures without losing the turn, and leaves a replacement-triggering turn for the fresh session to replay instead of handing it through a stale extension context.
 - `[Replacement Guard]` Each live extension session publishes its bounded replacement-readiness result to the host. Host-injected jobs can no longer replace across queued Telegram work, an active/pending turn, compaction, or Pi pending messages; Telegram preparation excludes only its own still-queued triggering turn.
 - `[Crash Replay]` Durable-inbox reconciliation preserves the triggering turn when the old extension shuts down during host preparation. Existing target, actor attribution, attachments, voice preference, queue lane/priority, grouping, and replay records remain unchanged.
+- `[Replay Idempotency]` Every fresh session replays durable pending turns, deduplicating them by stable inbound-turn identity against both the current queue and repeated inbox rows. Same-process replacement can no longer strand the triggering turn, while polling redelivery cannot duplicate it.
 - `[Validation]` Added host-registry, preparation failure/replacement/success, duplicate-dispatch, and shutdown-time inbox-retention regressions.
 
 ## Unreleased: Host-Authorized Household Group
