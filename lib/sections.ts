@@ -10,6 +10,7 @@ import {
 } from "./keyboard.ts";
 
 const SECTION_REGISTRY_KEY = "__piTelegramSectionRegistry__";
+const SECTION_PRESENTER_KEY = "__piTelegramSectionPresenter__";
 
 // --- Core Types ---
 
@@ -307,6 +308,57 @@ export function getTelegramSectionDiagnostics(): TelegramSectionDiagnostic[] {
   return registry ? registry.getDiagnostics() : [];
 }
 
+type TelegramSectionPresenter = (sectionId: string) => Promise<void>;
+
+/** @internal */
+export function bindTelegramSectionPresenter(
+  presenter: TelegramSectionPresenter,
+): () => void {
+  const store = globalThis as Record<string, unknown>;
+  store[SECTION_PRESENTER_KEY] = presenter;
+  return () => {
+    if (store[SECTION_PRESENTER_KEY] === presenter) {
+      delete store[SECTION_PRESENTER_KEY];
+    }
+  };
+}
+
+/** Present a registered section in the active Telegram turn target. */
+export async function presentTelegramSection(sectionId: string): Promise<void> {
+  const presenter = (globalThis as Record<string, unknown>)[
+    SECTION_PRESENTER_KEY
+  ] as TelegramSectionPresenter | undefined;
+  if (!presenter) {
+    throw new Error("Telegram section presenter is unavailable.");
+  }
+  await presenter(sectionId);
+}
+
+/** @internal */
+export function bindTelegramSectionRuntimePresenter(deps: {
+  registry: TelegramSectionRegistry;
+  getTarget: () => TelegramSectionTarget | undefined;
+  answerCallbackQuery: TelegramSectionCallbackHandlerDeps["answerCallbackQuery"];
+  editInteractiveMessage: TelegramSectionCallbackHandlerDeps["editInteractiveMessage"];
+  sendInteractiveMessage: TelegramSectionCallbackHandlerDeps["sendInteractiveMessage"];
+  deleteMessage: TelegramSectionCallbackHandlerDeps["deleteMessage"];
+}): () => void {
+  return bindTelegramSectionPresenter(async (sectionId) => {
+    const target = deps.getTarget();
+    if (!target) {
+      throw new Error("A Telegram section can only be presented during an active Telegram turn.");
+    }
+    await openTelegramSection(deps.registry, sectionId, target.chatId, {
+      answerCallbackQuery: deps.answerCallbackQuery,
+      target,
+      editInteractiveMessage: deps.editInteractiveMessage,
+      sendInteractiveMessage: deps.sendInteractiveMessage,
+      enqueuePrompt: async () => {},
+      deleteMessage: deps.deleteMessage,
+    });
+  });
+}
+
 // --- Registry ---
 
 const BACK_NAV_ROW = {
@@ -528,6 +580,41 @@ export interface TelegramSectionCallbackHandlerDeps {
   ) => Promise<number | undefined>;
   enqueuePrompt: (prompt: string) => Promise<void>;
   deleteMessage: (chatId: number, messageId: number) => Promise<void>;
+}
+
+/** @internal */
+export async function openTelegramSection(
+  registry: TelegramSectionRegistry,
+  sectionId: string,
+  chatId: number,
+  deps: TelegramSectionCallbackHandlerDeps,
+): Promise<void> {
+  const section = registry.getSections().find((entry) => entry.id === sectionId);
+  if (!section) {
+    throw new Error(`Telegram section is not available: ${sectionId}`);
+  }
+  try {
+    const ctx = buildTelegramSectionContext(
+      section.id,
+      section.token,
+      chatId,
+      undefined,
+      undefined,
+      deps,
+    );
+    const view = await section.registration.render(ctx);
+    await deps.sendInteractiveMessage(
+      chatId,
+      view.text,
+      view.parseMode ?? "html",
+      view.replyMarkup ?? { inline_keyboard: [] },
+      deps.target ? { target: deps.target } : undefined,
+    );
+    registry.clearError(section.token, "render");
+  } catch (error) {
+    registry.recordError(section.token, sectionErrorMessage(error), "render");
+    throw error;
+  }
 }
 
 export async function handleTelegramSectionOpen(

@@ -6,6 +6,7 @@
 
 export {
   getTelegramSectionDiagnostics,
+  presentTelegramSection,
   registerTelegramSection,
   type TelegramSectionCallbackContext,
   type TelegramSectionCallbackResult,

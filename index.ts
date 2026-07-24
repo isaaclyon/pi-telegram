@@ -538,6 +538,14 @@ export default function (pi: Pi.ExtensionAPI) {
   });
   const { replyTransport, editInteractiveMessage, sendInteractiveMessage } =
     replyRuntime;
+  Sections.bindTelegramSectionRuntimePresenter({
+    registry: sectionRegistry,
+    getTarget: activeTurnRuntime.getTarget,
+    answerCallbackQuery,
+    editInteractiveMessage,
+    sendInteractiveMessage,
+    deleteMessage: deleteTelegramMessage,
+  });
   const { sendTextReply, sendMarkdownReply } =
     Outbound.createTelegramOutboundTextReplyRuntime({
       sendTextReply: replyRuntime.sendTextReply,

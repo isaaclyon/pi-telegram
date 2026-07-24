@@ -18,6 +18,7 @@ import * as Queue from "../lib/queue.ts";
 import * as Routing from "../lib/routing.ts";
 import { registerTelegramHostHouseholdGroup } from "../lib/host.ts";
 import * as Runtime from "../lib/runtime.ts";
+import * as Sections from "../lib/sections.ts";
 import * as TextGroups from "../lib/text-groups.ts";
 import * as Threads from "../lib/threads.ts";
 import type * as Updates from "../lib/updates.ts";
@@ -396,6 +397,7 @@ interface RouteHarnessOptions {
   ) => string | undefined;
   instanceId?: string;
   getCommands?: () => any[];
+  sectionRegistry?: Sections.TelegramSectionRegistry;
   mediaGroupRuntime?: Media.TelegramMediaGroupController<
     TestMessage,
     TestContext
@@ -520,6 +522,7 @@ function createRouteHarness(options: RouteHarnessOptions = {}) {
     },
     setMyCommands: async () => undefined,
     getCommands: options.getCommands ?? (() => []),
+    sectionRegistry: options.sectionRegistry,
     downloadFile: async (_fileId, fileName) => `/tmp/${fileName}`,
     getThinkingLevel: () => "high",
     setThinkingLevel: () => undefined,
@@ -1486,6 +1489,55 @@ test("Routing runtime keeps extension command replies in the invoking thread", a
       failureDispose();
     }
   });
+});
+
+test("Routing runtime lets extension commands open sections without an agent turn", async () => {
+  const sectionRegistry = Sections.createTelegramExtensionSectionRegistry();
+  sectionRegistry.register({
+    id: "places",
+    label: "Places",
+    render: (ctx) => ({
+      text: "<b>Places</b>",
+      replyMarkup: {
+        inline_keyboard: [[{
+          text: "View",
+          callback_data: ctx.callbackData("view"),
+        }]],
+      },
+    }),
+  });
+  const dispose = Commands.registerTelegramCommand({
+    name: "placesx",
+    handler: async ({ openSection }) => openSection("places"),
+  });
+  try {
+    const { events, routeRuntime, telegramQueueStore } = createRouteHarness({
+      sectionRegistry,
+    });
+
+    await routeRuntime.handleUpdate(
+      {
+        message: {
+          message_id: 30,
+          chat: { id: 100, type: "private" },
+          from: { id: 7, is_bot: false },
+          message_thread_id: 42,
+          text: "/placesx",
+        },
+      },
+      { cwd: "/repo" },
+    );
+
+    assert.equal(events.includes("interactive:html:<b>Places</b>"), true);
+    assert.equal(events.some((event) => event.includes("section:0:view")), true);
+    assert.equal(
+      events.includes('interactive-options:{"target":{"chatId":100,"threadId":42}}'),
+      true,
+    );
+    assert.equal(telegramQueueStore.getQueuedItems().length, 0);
+  } finally {
+    dispose();
+  }
 });
 
 test("Routing runtime opens selected All menu command in the target thread", async () => {

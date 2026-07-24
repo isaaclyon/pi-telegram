@@ -196,7 +196,7 @@ const off = registerTelegramCommand({
   showInMenu: true,
   emoji: "🧩",
   handler: async (ctx) => {
-    await ctx.enqueuePrompt(`Review this work: ${ctx.args}`);
+    await ctx.openSection("@scope/review");
   },
 });
 ```
@@ -208,7 +208,7 @@ Contract:
 - Duplicate extension command names are rejected. The disposer removes only its own command registration.
 - Routing precedence is built-in bridge commands first, registered extension commands second, and prompt-template aliases after that. This lets an extension intentionally claim a command name; prompt-template owners can resolve collisions by renaming the template alias.
 - `showInMenu` defaults to `false`. When `true`, `emoji` is required and the command appears in `/start` help with that marker; it also joins Bot API command sync only when `description` is provided, because Telegram command-list entries require descriptions. The emoji is prefixed to the Bot API description as well. Workflow/product commands should opt in deliberately instead of expanding the core command row by default.
-- The command context currently provides `name`, `args`, `reply(text)`, and `enqueuePrompt(prompt)`. Use `enqueuePrompt()` when a command should create normal queued Pi work rather than perform immediate Telegram-side handling.
+- The command context provides `name`, `args`, `reply(text)`, `openSection(sectionId)`, and `enqueuePrompt(prompt)`. Use `openSection()` for an already registered Telegram-native section, or `enqueuePrompt()` when a command should create normal queued Pi work.
 - Handler failures are isolated: the bridge records a `telegram-command` runtime diagnostic, sends a compact failure reply, and keeps Telegram polling/routing alive.
 
 Core commands stay reserved for bridge lifecycle, transport ownership, queue safety, and essential operator controls. Opinionated workflow commands should live in companion extensions through this registry.
@@ -246,6 +246,7 @@ Contract:
 - `ctx.callbackData(action, payload?)` builds compact `section:` callbacks and validates Telegram's 64-byte limit.
 - `ctx.edit()` auto-prepends the correct Back/Main-menu row. `ctx.open()` sends a standalone chat message without auto-navigation.
 - Section dynamic-label, render, and callback errors are isolated, surfaced as callback popups where applicable, and reflected by `getTelegramSectionDiagnostics()` until the matching surface succeeds.
+- `presentTelegramSection(sectionId)` may present a registered section from companion code while an active Telegram turn owns the delivery target. It rejects outside an active Telegram turn instead of guessing a destination.
 
 Full behavior: [Extension Sections](./sections.md).
 

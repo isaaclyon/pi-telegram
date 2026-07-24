@@ -8,7 +8,10 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import * as Commands from "./commands.ts";
 import type { TelegramConfigStore } from "./config.ts";
-import type { TelegramSectionRegistry } from "./sections.ts";
+import {
+  openTelegramSection,
+  type TelegramSectionRegistry,
+} from "./sections.ts";
 import type { TelegramInboundHandlerRuntime } from "./inbound.ts";
 import {
   getTelegramHostHouseholdActorLabel,
@@ -1855,6 +1858,29 @@ export function createTelegramInboundRouteRuntime<
                 target: sourceTarget,
               })
               .then(() => {}),
+          openSection: async (sectionId) => {
+            if (!deps.sectionRegistry || !deps.sendInteractiveMessage) {
+              throw new Error("Telegram sections are unavailable.");
+            }
+            await openTelegramSection(
+              deps.sectionRegistry,
+              sectionId,
+              message.chat.id,
+              {
+                answerCallbackQuery: deps.answerCallbackQuery,
+                target: sourceTarget,
+                editInteractiveMessage:
+                  deps.editInteractiveMessage ?? (async () => {}),
+                sendInteractiveMessage: deps.sendInteractiveMessage,
+                enqueuePrompt: (prompt) =>
+                  promptEnqueue(
+                    [{ ...message, text: prompt, caption: undefined } as TMessage],
+                    ctx,
+                  ),
+                deleteMessage: deps.deleteMessage ?? (async () => {}),
+              },
+            );
+          },
           enqueuePrompt: (prompt) =>
             promptEnqueue(
               [
