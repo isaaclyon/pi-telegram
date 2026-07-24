@@ -136,7 +136,21 @@ export function deserializeTelegramInboundTurn(
   if (candidate.kind !== "prompt") return undefined;
   if (typeof candidate.chatId !== "number") return undefined;
   if (!Array.isArray(candidate.sourceMessageIds)) return undefined;
+  if (!candidate.sourceMessageIds.every(Number.isSafeInteger)) return undefined;
   if (!Array.isArray(candidate.content)) return undefined;
+  if (
+    !candidate.content.every((item) => {
+      if (!item || typeof item !== "object") return false;
+      if (item.type === "text") return typeof item.text === "string";
+      return (
+        item.type === "image" &&
+        typeof item.data === "string" &&
+        typeof item.mimeType === "string"
+      );
+    })
+  ) {
+    return undefined;
+  }
   return parsed as PendingTelegramTurn;
 }
 

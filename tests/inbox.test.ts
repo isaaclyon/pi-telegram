@@ -112,6 +112,18 @@ test("serialize/deserialize round-trips a prompt turn and rejects junk", () => {
     deserializeTelegramInboundTurn(JSON.stringify({ kind: "control" })),
     undefined,
   );
+  assert.equal(
+    deserializeTelegramInboundTurn(
+      JSON.stringify({ ...turn, sourceMessageIds: ["10"] }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    deserializeTelegramInboundTurn(
+      JSON.stringify({ ...turn, content: [{ type: "text", text: 42 }] }),
+    ),
+    undefined,
+  );
 });
 
 test("reconcile persists queued prompts and drops dispatched ones", () => {
