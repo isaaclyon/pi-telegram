@@ -11,7 +11,10 @@ import {
   type TelegramQueueItem,
   type TelegramQueueStateStore,
 } from "./queue.ts";
-import { getTelegramHostHouseholdGroup } from "./host.ts";
+import {
+  getTelegramHostHouseholdGroup,
+  isTelegramHostPromptPreparationInFlight,
+} from "./host.ts";
 
 /** A durably stored prompt turn, keyed by its stable identity. */
 export interface TelegramInboundInboxRecord {
@@ -178,6 +181,10 @@ export function withTelegramInboundInboxPersistence<TContext>(
       store.setQueuedItems(items);
       const inbox = getInbox();
       if (!inbox) return;
+      // A host preparation may replace the Pi session. The old extension's
+      // shutdown clears its local queue while that replacement is awaited;
+      // retain the durable turn so the fresh extension can replay it.
+      if (items.length === 0 && isTelegramHostPromptPreparationInFlight()) return;
       reconcileTelegramInboundInbox(inbox, items, now());
     },
   };

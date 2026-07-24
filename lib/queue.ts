@@ -2110,6 +2110,9 @@ export interface TelegramQueueDispatchControllerDeps<
   sendTextReply: TelegramControlRuntimeDeps<TContext>["sendTextReply"];
   onPromptDispatchStart: (ctx: TContext, chatId: number) => void;
   sendUserMessage: TelegramDispatchRuntimeDeps<TContext>["sendUserMessage"];
+  preparePrompt?: (
+    item: PendingTelegramTurn,
+  ) => Promise<{ sessionReplaced: boolean }>;
   onPromptDispatchFailure: (ctx: TContext, message: string) => void;
 }
 
@@ -2162,6 +2165,7 @@ export function createTelegramQueueDispatchRuntime<TContext = unknown>(
     sendTextReply: deps.sendTextReply,
     onPromptDispatchStart: deps.onPromptDispatchStart,
     sendUserMessage: deps.sendUserMessage,
+    preparePrompt: deps.preparePrompt,
     onPromptDispatchFailure: deps.onPromptDispatchFailure,
     recordRuntimeEvent: deps.recordRuntimeEvent,
   });
@@ -2171,6 +2175,7 @@ export function createTelegramQueueDispatchController<TContext = unknown>(
   deps: TelegramQueueDispatchControllerDeps<TContext>,
 ): TelegramQueueDispatchController<TContext> {
   let controlDispatchPending = false;
+  let promptPreparationPending = false;
   const controller: TelegramQueueDispatchController<TContext> = {
     dispatchNext: (ctx) => {
       if (deps.hasDispatchContext && !deps.hasDispatchContext()) return;
@@ -2178,10 +2183,49 @@ export function createTelegramQueueDispatchController<TContext = unknown>(
         deps.updateStatus(ctx);
         return;
       }
+      if (promptPreparationPending) return;
       const dispatchPlan = planNextTelegramQueueAction(
         deps.getQueuedItems(),
         deps.canDispatch(ctx),
       );
+      if (dispatchPlan.kind === "prompt" && deps.preparePrompt) {
+        promptPreparationPending = true;
+        deps.updateStatus(ctx);
+        void deps
+          .preparePrompt(dispatchPlan.item)
+          .then((result) => {
+            promptPreparationPending = false;
+            if (result.sessionReplaced) return;
+            if (deps.hasDispatchContext && !deps.hasDispatchContext()) return;
+            const refreshedPlan = planNextTelegramQueueAction(
+              deps.getQueuedItems(),
+              deps.canDispatch(ctx),
+            );
+            if (
+              refreshedPlan.kind !== "prompt" ||
+              refreshedPlan.item !== dispatchPlan.item
+            ) {
+              controller.dispatchNext(ctx);
+              return;
+            }
+            deps.setQueuedItems(refreshedPlan.remainingItems);
+            executeTelegramQueueDispatchPlan(refreshedPlan, {
+              executeControlItem: () => undefined,
+              onPromptDispatchStart: (chatId) =>
+                deps.onPromptDispatchStart(ctx, chatId),
+              sendUserMessage: deps.sendUserMessage,
+              onPromptDispatchFailure: (message) =>
+                deps.onPromptDispatchFailure(ctx, message),
+              onIdle: () => deps.updateStatus(ctx),
+            });
+          })
+          .catch((error) => {
+            promptPreparationPending = false;
+            const message = getTelegramQueueErrorMessage(error);
+            deps.onPromptDispatchFailure(ctx, message);
+          });
+        return;
+      }
       if (dispatchPlan.kind !== "none") {
         deps.setQueuedItems(dispatchPlan.remainingItems);
       }

@@ -19,7 +19,11 @@ import {
   withTelegramInboundInboxPersistence,
   type TelegramInboundInbox,
 } from "../lib/inbox.ts";
-import { registerTelegramHostHouseholdGroup } from "../lib/host.ts";
+import {
+  prepareTelegramHostPrompt,
+  registerTelegramHostHouseholdGroup,
+  registerTelegramHostPromptPreparation,
+} from "../lib/host.ts";
 import {
   createTelegramQueueStore,
   type PendingTelegramTurn,
@@ -166,6 +170,32 @@ test("wrapped store reconciles the inbox on every mutation", () => {
 
   store.setQueuedItems([]);
   assert.equal(inbox.size(), 0);
+});
+
+test("wrapped store retains a triggering turn while host preparation replaces the session", async () => {
+  const inbox = createFakeInbox();
+  const store = withTelegramInboundInboxPersistence(
+    createTelegramQueueStore(),
+    () => inbox,
+  );
+  store.setQueuedItems([makeTurn(7, [10], "rotate me")]);
+  let finish!: () => void;
+  const replacement = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const dispose = registerTelegramHostPromptPreparation(async () => {
+    await replacement;
+    return { sessionReplaced: true };
+  });
+  try {
+    const preparing = prepareTelegramHostPrompt();
+    store.setQueuedItems([]);
+    assert.equal(inbox.size(), 1);
+    finish();
+    await preparing;
+  } finally {
+    dispose();
+  }
 });
 
 test("wrapped store is a passthrough when no inbox is registered", () => {

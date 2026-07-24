@@ -81,6 +81,10 @@ Import from `@llblab/pi-telegram/host` only from the trusted Pi host integration
 ```ts
 const unregister = registerTelegramHostNewSession(() => runtime.newSession());
 
+const unregisterPreparation = registerTelegramHostPromptPreparation(
+  async ({ trigger }) => prepareInboundPrompt(trigger),
+);
+
 const unregisterHousehold = registerTelegramHostHouseholdGroup({
   kind: "household-group",
   chatId: -1001234567890,
@@ -93,11 +97,13 @@ const unregisterHousehold = registerTelegramHostHouseholdGroup({
 
 The session callable is deliberately narrow: it returns `{ cancelled: boolean }` and must delegate to the same official session-replacement path used by Pi's terminal command. A non-cancelled provider resolution means the official host replacement completed and rebound; provider errors reject the request. pi-telegram stores only a short-lived target handoff and does not retain an `ExtensionContext`; the host owns context binding and lifecycle replacement. Registration is optional, so `/new` reports an unavailable response when no host capability is present.
 
+The optional prompt-preparation callable is similarly narrow. Immediately before a queued prompt is handed to Pi, it receives only `{ trigger: "telegram" }` and returns `{ sessionReplaced: boolean }`. Prompt text, actor identifiers, targets, attachments, and the Pi runtime are not exposed. While the promise is pending, pi-telegram keeps the complete turn queued and durable and admits no second dispatcher. Rejection leaves the turn queued for retry. A `sessionReplaced: true` result tells the stale dispatcher not to hand off; the fresh extension runtime replays the same durable turn and prepares it again before normal dispatch.
+
 The household policy is also deliberately narrow. It accepts one negative safe-integer group/supergroup chat id and exactly two distinct positive safe-integer user ids with distinct stable labels. Labels are host-owned prompt identity and must use safe identifier characters; Telegram display names and usernames remain untrusted presentation data. Once registered, exact target plus exact actor authorization replaces pairing for default routing. Unverifiable authorship, anonymous/channel authorship, DMs, foreign chats, outsiders, bots, and migration updates fail closed. Durable turns retain the actor id, label, and target and are authorized again before replay. Private-chat Threaded Mode and Guest Mode do not activate on this surface.
 
 The policy also changes `/new` interaction, not its host capability: a household command first posts an inline confirmation warning that both actors share the history, and only an authorized confirmation callback invokes the same narrow replacement provider. Every readiness guard is checked again at confirmation time. Personal-DM behavior remains unchanged.
 
-The process-global host registry allows the session provider and household policy to coexist, but permits only one active registration of each kind per JavaScript realm. Every disposer is identity-safe. Register host capabilities before loading the pi-telegram extension and dispose them with the bridge runtime.
+The process-global host registry allows the session provider, prompt preparation, and household policy to coexist, but permits only one active registration of each kind per JavaScript realm. Every disposer is identity-safe. Register host capabilities before loading the pi-telegram extension and dispose them with the bridge runtime.
 
 ## Configuration API
 

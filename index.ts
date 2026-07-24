@@ -583,6 +583,7 @@ export default function (pi: Pi.ExtensionAPI) {
       recordRuntimeEvent,
       ...promptDispatchRuntime,
       sendUserMessage,
+      preparePrompt: Host.prepareTelegramHostPrompt,
     }).dispatchNext;
   const queueDispatchWatchdogRuntime =
     Queue.createTelegramQueueDispatchWatchdogRuntime({

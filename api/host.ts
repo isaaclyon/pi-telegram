@@ -7,8 +7,12 @@
 export {
   registerTelegramHostHouseholdGroup,
   registerTelegramHostNewSession,
+  registerTelegramHostPromptPreparation,
   type TelegramHostHouseholdActor,
   type TelegramHostHouseholdGroup,
   type TelegramHostNewSession,
   type TelegramHostNewSessionResult,
+  type TelegramHostPromptPreparation,
+  type TelegramHostPromptPreparationInput,
+  type TelegramHostPromptPreparationResult,
 } from "../lib/host.ts";

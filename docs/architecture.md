@@ -193,7 +193,9 @@ Dispatch requires:
 
 A dispatched prompt remains queued until `agent_start` consumes it. This keeps the active Telegram turn bound for previews, attachments, aborts, and final replies.
 
-Post-agent-end queue dispatch uses a session-bound deferred dispatcher. It is activated on session start, clears timers on shutdown, and skips callbacks from older generations before touching `ExtensionContext`. Dispatch stays session-bound after polling ownership moves elsewhere. When a queued Telegram prompt is forwarded into Pi, it uses Pi's explicit `followUp` delivery option so Telegram input preserves the existing non-steering queue contract even if Pi is still settling active work.
+If the trusted host registers prompt preparation, dispatch awaits it before calling `sendUserMessage`. The complete prompt remains in the queue and durable inbox during that wait. Preparation rejection leaves it available for watchdog retry; a reported session replacement stops the old dispatcher and lets the fresh runtime replay the durable turn. Shutdown-time queue clearing does not reconcile that one in-flight preparation away. This is the narrow asynchronous seam used by hosts that need a lifecycle decision without exposing Pi internals or prompt content to the capability.
+
+Post-agent-end queue dispatch uses a session-bound deferred dispatcher. It is activated on session start, clears timers on shutdown, and skips callbacks from older generations before touching `ExtensionContext`. Dispatch stays session-bound after polling ownership moves elsewhere. Queued Telegram prompts are forwarded as normal user turns only after every readiness and optional host-preparation guard succeeds.
 
 ### Controls And Menus
 
@@ -305,7 +307,7 @@ This is limited to Telegram-owned runs. If Pi is busy with non-Telegram work, th
 
 ## Shutdown And Timer Lifecycle
 
-`session_shutdown` is the hard boundary for session-bound runtime work. It suspends Telegram polling through the locked polling runtime, aborts the poll controller, stops native typing, unbinds deferred queue dispatch, clears pending media/text-group input, clears preview state, clears active turns, and drops the active abort handler.
+`session_shutdown` is the hard boundary for session-bound runtime work. It suspends Telegram polling through the locked polling runtime, aborts the poll controller, stops native typing, unbinds deferred queue dispatch, clears pending media/text-group input, clears preview state, clears active turns, and drops the active abort handler. If shutdown occurs inside host prompt preparation, local queue state is still cleared but durable-inbox removal is deferred so the replacement session can replay the triggering turn.
 
 Non-critical timers are `unref()`ed so print/headless processes are not kept alive only by Telegram housekeeping. This includes typing keepalive intervals, bounded typing-idle waits, deferred queue dispatch, media/text-group debounce windows, preview flush timers, and polling retry sleeps. Polling retry sleep is abort-aware, so shutdown does not wait for the normal retry delay after a polling error.
 

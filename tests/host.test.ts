@@ -10,9 +10,11 @@ import test from "node:test";
 import {
   registerTelegramHostHouseholdGroup,
   registerTelegramHostNewSession,
+  registerTelegramHostPromptPreparation,
 } from "../api/host.ts";
 import {
   getTelegramHostHouseholdGroup,
+  getTelegramHostPromptPreparation,
   isTelegramHostPrivateChatThreadedModeAllowed,
 } from "../lib/host.ts";
 
@@ -58,6 +60,24 @@ test("host API exposes only the narrow callable capability", () => {
   const dispose = registerTelegramHostNewSession(async () => ({ cancelled: true }));
   assert.equal(typeof dispose, "function");
   dispose();
+  clearHostRegistry();
+});
+
+test("host prompt preparation registration is narrow and identity-safe", async () => {
+  clearHostRegistry();
+  const calls: string[] = [];
+  const dispose = registerTelegramHostPromptPreparation(async (input) => {
+    calls.push(input.trigger);
+    return { sessionReplaced: true };
+  });
+  await assert.doesNotReject(async () => {
+    assert.deepEqual(await getTelegramHostPromptPreparation()?.({ trigger: "telegram" }), {
+      sessionReplaced: true,
+    });
+  });
+  assert.deepEqual(calls, ["telegram"]);
+  dispose();
+  assert.equal(getTelegramHostPromptPreparation(), undefined);
   clearHostRegistry();
 });
 

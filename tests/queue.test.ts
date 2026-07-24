@@ -3203,6 +3203,83 @@ test("Queue dispatch controller plans prompts and reports dispatch failures", ()
   assert.equal(queuedItems.length, 1);
 });
 
+test("Queue dispatch waits for host preparation and retains the turn when preparation fails", async () => {
+  const events: string[] = [];
+  const prompt = createQueueTestPromptTurn();
+  let queuedItems: TelegramQueueItem<string>[] = [prompt];
+  let rejectPreparation!: (error: Error) => void;
+  const preparation = new Promise<{ sessionReplaced: boolean }>((_resolve, reject) => {
+    rejectPreparation = reject;
+  });
+  const controller = createTelegramQueueDispatchController<string>({
+    getQueuedItems: () => queuedItems,
+    setQueuedItems: (items) => {
+      queuedItems = items;
+      events.push(`items:${items.length}`);
+    },
+    canDispatch: () => true,
+    preparePrompt: () => preparation,
+    updateStatus: () => events.push("status"),
+    sendTextReply: async () => undefined,
+    onPromptDispatchStart: () => events.push("start"),
+    sendUserMessage: () => events.push("send"),
+    onPromptDispatchFailure: (_ctx, message) => events.push(`failure:${message}`),
+  });
+  controller.dispatchNext("ctx");
+  controller.dispatchNext("ctx");
+  assert.deepEqual(events, ["status"]);
+  rejectPreparation(new Error("rotation unavailable"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(queuedItems[0], prompt);
+  assert.deepEqual(events, ["status", "failure:rotation unavailable"]);
+});
+
+test("Queue dispatch leaves a triggering turn for replay after preparation replaces the session", async () => {
+  const events: string[] = [];
+  const prompt = createQueueTestPromptTurn();
+  let queuedItems: TelegramQueueItem<string>[] = [prompt];
+  const controller = createTelegramQueueDispatchController<string>({
+    getQueuedItems: () => queuedItems,
+    setQueuedItems: (items) => {
+      queuedItems = items;
+      events.push(`items:${items.length}`);
+    },
+    canDispatch: () => true,
+    preparePrompt: async () => ({ sessionReplaced: true }),
+    updateStatus: () => events.push("status"),
+    sendTextReply: async () => undefined,
+    onPromptDispatchStart: () => events.push("start"),
+    sendUserMessage: () => events.push("send"),
+    onPromptDispatchFailure: (_ctx, message) => events.push(`failure:${message}`),
+  });
+  controller.dispatchNext("ctx");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(queuedItems[0], prompt);
+  assert.deepEqual(events, ["status"]);
+});
+
+test("Queue dispatch hands off exactly once after successful preparation without replacement", async () => {
+  const events: string[] = [];
+  let queuedItems: TelegramQueueItem<string>[] = [createQueueTestPromptTurn()];
+  const controller = createTelegramQueueDispatchController<string>({
+    getQueuedItems: () => queuedItems,
+    setQueuedItems: (items) => {
+      queuedItems = items;
+      events.push(`items:${items.length}`);
+    },
+    canDispatch: () => true,
+    preparePrompt: async () => ({ sessionReplaced: false }),
+    updateStatus: () => events.push("status"),
+    sendTextReply: async () => undefined,
+    onPromptDispatchStart: () => events.push("start"),
+    sendUserMessage: () => events.push("send"),
+    onPromptDispatchFailure: (_ctx, message) => events.push(`failure:${message}`),
+  });
+  controller.dispatchNext("ctx");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(events, ["status", "items:1", "start", "send"]);
+});
+
 test("Queue dispatch runtime binds readiness guards to dispatch controller", () => {
   const events: string[] = [];
   let active = true;

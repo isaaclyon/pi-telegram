@@ -1,7 +1,7 @@
 /**
  * Telegram host capability registry
  * Zones: pi agent host boundary, public interop
- * Owns narrow host-provided session replacement and household-surface capabilities without exposing Pi runtime internals
+ * Owns narrow host-provided session replacement, prompt preparation, and household-surface capabilities without exposing Pi runtime internals
  */
 
 export interface TelegramHostNewSessionResult {
@@ -9,6 +9,18 @@ export interface TelegramHostNewSessionResult {
 }
 
 export type TelegramHostNewSession = () => Promise<TelegramHostNewSessionResult>;
+
+export interface TelegramHostPromptPreparationInput {
+  trigger: "telegram";
+}
+
+export interface TelegramHostPromptPreparationResult {
+  sessionReplaced: boolean;
+}
+
+export type TelegramHostPromptPreparation = (
+  input: TelegramHostPromptPreparationInput,
+) => Promise<TelegramHostPromptPreparationResult>;
 
 export interface TelegramHostHouseholdActor {
   userId: number;
@@ -32,6 +44,8 @@ interface TelegramHostRegistry {
   token?: object;
   householdGroup?: TelegramHostHouseholdGroup;
   householdToken?: object;
+  promptPreparation?: TelegramHostPromptPreparation;
+  promptPreparationToken?: object;
 }
 
 const TELEGRAM_HOST_REGISTRY_KEY = Symbol.for(
@@ -45,6 +59,8 @@ function isTelegramHostRegistry(value: unknown): value is TelegramHostRegistry {
   const token = candidate.token;
   const householdGroup = candidate.householdGroup;
   const householdToken = candidate.householdToken;
+  const promptPreparation = candidate.promptPreparation;
+  const promptPreparationToken = candidate.promptPreparationToken;
   if (candidate.version !== 1) return false;
   if (provider !== undefined && typeof provider !== "function") return false;
   if (token !== undefined && (!token || typeof token !== "object")) {
@@ -64,9 +80,23 @@ function isTelegramHostRegistry(value: unknown): value is TelegramHostRegistry {
   ) {
     return false;
   }
+  if (
+    promptPreparation !== undefined &&
+    typeof promptPreparation !== "function"
+  ) {
+    return false;
+  }
+  if (
+    promptPreparationToken !== undefined &&
+    (!promptPreparationToken || typeof promptPreparationToken !== "object")
+  ) {
+    return false;
+  }
   return (
     (provider === undefined) === (token === undefined) &&
-    (householdGroup === undefined) === (householdToken === undefined)
+    (householdGroup === undefined) === (householdToken === undefined) &&
+    (promptPreparation === undefined) ===
+      (promptPreparationToken === undefined)
   );
 }
 
@@ -119,6 +149,49 @@ export function registerTelegramHostNewSession(
 
 export function getTelegramHostNewSession(): TelegramHostNewSession | undefined {
   return getTelegramHostRegistry().provider;
+}
+
+export function registerTelegramHostPromptPreparation(
+  prepare: TelegramHostPromptPreparation,
+): () => void {
+  if (typeof prepare !== "function") {
+    throw new TypeError("Telegram host prompt preparation capability must be a function");
+  }
+  const registry = getTelegramHostRegistry();
+  if (registry.promptPreparation) {
+    throw new Error("Telegram host prompt preparation capability is already registered");
+  }
+  const token = {};
+  registry.promptPreparation = prepare;
+  registry.promptPreparationToken = token;
+  return () => {
+    if (registry.promptPreparationToken !== token) return;
+    delete registry.promptPreparation;
+    delete registry.promptPreparationToken;
+  };
+}
+
+export function getTelegramHostPromptPreparation():
+  | TelegramHostPromptPreparation
+  | undefined {
+  return getTelegramHostRegistry().promptPreparation;
+}
+
+let promptPreparationsInFlight = 0;
+
+export function isTelegramHostPromptPreparationInFlight(): boolean {
+  return promptPreparationsInFlight > 0;
+}
+
+export async function prepareTelegramHostPrompt(): Promise<TelegramHostPromptPreparationResult> {
+  const prepare = getTelegramHostPromptPreparation();
+  if (!prepare) return { sessionReplaced: false };
+  promptPreparationsInFlight += 1;
+  try {
+    return await prepare({ trigger: "telegram" });
+  } finally {
+    promptPreparationsInFlight -= 1;
+  }
 }
 
 function validateTelegramHostHouseholdGroup(
