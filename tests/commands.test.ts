@@ -20,6 +20,7 @@ import {
   createTelegramCommandOrPromptRuntime,
   createTelegramCommandTargetQueueRuntime,
   createTelegramCommandTargetRuntime,
+  createTelegramHostSessionReplacementReadinessCheck,
   executeTelegramCommandAction,
   getTelegramCommandExecutionMode,
   getTelegramCommandMessageTarget,
@@ -86,6 +87,32 @@ function createBridgeCommandContext(
     },
   } as unknown as ExtensionCommandContext;
 }
+
+test("Host replacement readiness blocks jobs across Telegram state but allows the triggering prompt", () => {
+  let queued = true;
+  let active = false;
+  let pendingReplacement = false;
+  const check = createTelegramHostSessionReplacementReadinessCheck({
+    getContext: () => "ctx",
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    hasActiveTelegramTurn: () => active,
+    hasDispatchPending: () => false,
+    hasQueuedTelegramItems: () => queued,
+    isCompactionInProgress: () => false,
+    hasPendingSessionReplacement: () => pendingReplacement,
+  });
+
+  assert.match(check({ trigger: "job:cron" }) ?? "", /queue/i);
+  assert.equal(check({ trigger: "telegram" }), undefined);
+  active = true;
+  assert.match(check({ trigger: "telegram" }) ?? "", /active/i);
+  active = false;
+  queued = false;
+  pendingReplacement = true;
+  assert.match(check({ trigger: "job:webhook" }) ?? "", /already pending/i);
+  assert.equal(check({ trigger: "manual" }), undefined);
+});
 
 test("Command helpers expose Telegram bot command definitions", () => {
   assert.deepEqual(TELEGRAM_COMMAND_EMOJI.model, "🤖");

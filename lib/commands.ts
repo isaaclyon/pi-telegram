@@ -1153,6 +1153,35 @@ export function createTelegramNewSessionReadinessCheck<TContext>(
   };
 }
 
+export interface TelegramHostSessionReplacementReadinessPorts<TContext>
+  extends TelegramNewSessionReadinessPorts<TContext> {
+  hasPendingSessionReplacement: () => boolean;
+}
+
+export function createTelegramHostSessionReplacementReadinessCheck<TContext>(
+  deps: TelegramHostSessionReplacementReadinessPorts<TContext>,
+): (input: {
+  trigger: "manual" | "telegram" | `job:${string}`;
+}) => string | undefined {
+  return ({ trigger }) => {
+    const ctx = deps.getContext();
+    if (!ctx) return "Cannot replace the session without an active Pi session.";
+    const reason = getTelegramNewSessionBlockingReason({
+      idle: deps.isIdle(ctx),
+      pendingMessages: deps.hasPendingMessages(ctx),
+      activeTelegramTurn: deps.hasActiveTelegramTurn(),
+      dispatchPending: deps.hasDispatchPending(),
+      queuedTelegramItems:
+        trigger === "telegram" ? false : deps.hasQueuedTelegramItems(),
+      compactionInProgress: deps.isCompactionInProgress(),
+    });
+    if (reason) return reason;
+    return trigger !== "manual" && deps.hasPendingSessionReplacement()
+      ? "A new session replacement is already pending."
+      : undefined;
+  };
+}
+
 export async function handleTelegramNewSessionCommand<TMessage>(
   message: TMessage,
   deps: TelegramNewSessionCommandDeps<TMessage>,
