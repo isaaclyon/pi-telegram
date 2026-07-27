@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased: Direct Section Presentation
+
+- Let registered Telegram commands open companion sections directly, and let active-turn companion workflows present registered sections without an agent round trip.
+
+## Unreleased: Host Prompt Preparation
+
+- `[Polling Diagnostics]` Long-poll completion timing and update counts now enter the bounded profile runtime JSONL log without message content, and a 45-second `getUpdates` watchdog aborts and retries a stuck request. Impact: an apparently healthy but deaf Telegram poller becomes diagnosable and can recover from a transport request that never settles.
+- `[Host Interop]` Added an optional narrow host prompt-preparation capability that runs immediately before a queued Telegram prompt enters Pi and reports whether it replaced the session. The capability receives only the Telegram trigger kind and exposes no Pi runtime or prompt content.
+- `[Queue Reliability]` Prompt dispatch now remains queued and durable while asynchronous host preparation is pending, blocks duplicate dispatchers, retries preparation failures without losing the turn, and leaves a replacement-triggering turn for the fresh session to replay instead of handing it through a stale extension context.
+- `[Replacement Guard]` Each live extension session publishes its bounded replacement-readiness result to the host. Host-injected jobs can no longer replace across queued Telegram work, an active/pending turn, compaction, or Pi pending messages; Telegram preparation excludes only its own still-queued triggering turn.
+- `[Crash Replay]` Durable-inbox reconciliation preserves the triggering turn when the old extension shuts down during host preparation. Existing target, actor attribution, attachments, voice preference, queue lane/priority, grouping, and replay records remain unchanged.
+- `[Replay Idempotency]` Every fresh session replays durable pending turns, deduplicating them by stable inbound-turn identity against both the current queue and repeated inbox rows. Same-process replacement can no longer strand the triggering turn, while polling redelivery cannot duplicate it.
+- `[Validation]` Added host-registry, preparation failure/replacement/success, duplicate-dispatch, and shutdown-time inbox-retention regressions.
+
+## Unreleased: Host-Authorized Household Group
+
+- `[Authorization]` Added an optional host-registered policy for exactly one Telegram group and exactly two allowlisted human actors. Default routing now validates both target and actor for messages, edits, callbacks, reactions, media, and durable replay; DMs, foreign chats, outsiders, bots, anonymous/channel authors, migration events, and unverifiable updates fail closed.
+- `[Attribution]` Household turns use host-owned stable prompt labels such as `[telegram|actor:Isaac]`, retain actor id/label plus exact target through queues, edits, media grouping, buttons, and replay, and never treat mutable Telegram names as authorization or prompt identity.
+- `[Isolation]` Household mode replaces personal pairing for the runtime, keeps one shared queue/session, targets all replies to the configured group, and disables private-chat Threaded Mode and Guest Mode. Classic personal-DM behavior remains unchanged when no household policy is registered.
+- `[Shared Session Control]` Household `/new` now requires an actor-authorized inline confirmation before it replaces the history shared by both people, re-running all idle/queue/compaction/replacement guards when the callback arrives. Personal-DM `/new` remains immediate after its existing guards.
+- `[Diagnostics]` Status reports only `surface: household group` and the stable authorized labels; bot tokens, chat ids, and actor ids remain absent.
+- `[Validation]` Added host-registry, authorization, transport, replay, edit/button attribution, status, routing, and extension-runtime regressions, including a mixed DM/outsider/authorized-actor batch proving that only the authorized group turn reaches Pi.
+
+## Unreleased: Tool Activity Status Message
+
+- `[Tool Activity]` While the agent runs tools, the bridge now posts one quiet (`disable_notification`) status message on the first `tool_execution_start` and edits it in place as tools progress: the last six tool lines with compact argument hints (`▸ read lib/host.ts`, `⏳ bash: npm test`, `✗` on error) plus a `(N tools · 45s)` footer. Edits are single-flight and throttled to one per 2s to respect Telegram's per-chat edit limits, and the message is deleted at `agent_end` before the final reply is delivered. Impact: long tool-heavy turns are no longer silent between the user's prompt and the final answer, and chat history stays clean afterward.
+- `[Configuration]` Added `assistant.toolActivity` to `telegram.json` (default on); set it to `false` to restore the previous typing-indicator-only behavior. Guest Mode queries and turns without an owned Telegram chat never receive a status message.
+- `[Validation]` Added tool-activity regressions for label/hint formatting, HTML escaping, the six-line window, throttled edit coalescing, unchanged-text skips, deletion ordering against in-flight sends, API-error quiescence, disabled/guest/no-turn gating, and lifecycle binding delegation.
+
+## Unreleased: Telegram `/new` Hardening
+
+- `[Fresh Sessions]` Added the guarded Telegram `/new` command, which consumes the command, preserves the exact `{ chatId, threadId? }` target, and delegates only through the optional narrow host capability for Pi's official session-replacement path. The command reports unavailable hosts and rejects busy, queued, compacting, or duplicate-replacement sessions.
+- `[Named Profiles]` The replacement handoff now captures the active named Telegram profile and restores it before follower refresh and completion delivery in the fresh extension runtime. Impact: `/new` from a named bot can no longer send its completion notice through the default profile's bot.
+- `[Scheduling]` Removed the replacement runtime's independent timer. Polling owners flush only after update-offset persistence, while followers flush only after forwarded inbound handling unwinds, preventing session replacement from racing persisted routing state.
+- `[Architecture]` Moved session-start composition into the owning replacement domain so `index.ts` remains a pure, arrow-free composition root; the runtime retains no `ExtensionContext`.
+- `[Validation]` Added command, host, replacement, follower, and polling regressions for command consumption, guard coverage, exact targets, cancellation, provider failure, unavailable hosts, offset ordering, and deferred invocation.
+
 ## 0.20.6: Guest Attribution And Voice Action Hotfix
 
 - `[Voice Action Syntax]` Hidden `telegram_voice` actions now accept the intuitive paired form `<!-- telegram_voice ... -->...<!-- /telegram_voice -->` alongside inline, attribute-text, and single-comment multiline forms. The parser captures a non-empty multiline body and preserves language/rate attributes while leaving surrounding prose visible. Impact: agents can use an explicit closing tag without leaking the intended TTS payload as ordinary text.

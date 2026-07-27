@@ -335,6 +335,7 @@ export interface TelegramBusForwardedUpdateReceiverRuntimeDeps<
     },
     ctx: TContext,
   ) => Promise<void> | void;
+  afterForwardedUpdatesPersisted?: () => void;
   recordRuntimeEvent?: (
     category: string,
     error: unknown,
@@ -957,6 +958,26 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
     TMessage
   >,
 ): TelegramBusForwardedUpdateReceiverRuntime {
+  let activeForwardedHandlers = 0;
+  let flushRequested = false;
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleFlushWhenIdle = (): void => {
+    if (
+      !deps.afterForwardedUpdatesPersisted ||
+      !flushRequested ||
+      activeForwardedHandlers !== 0 ||
+      flushTimer
+    ) {
+      return;
+    }
+    flushTimer = setTimeout(() => {
+      flushTimer = undefined;
+      if (activeForwardedHandlers !== 0 || !flushRequested) return;
+      flushRequested = false;
+      deps.afterForwardedUpdatesPersisted?.();
+    }, 0);
+    flushTimer.unref?.();
+  };
   const server = createTelegramBusLocalServer({
     socketPath: deps.socketPath,
     recordTransportEvent(phase, details) {
@@ -975,6 +996,7 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
           envelope.kind !== "leader.forwardReaction" &&
           envelope.kind !== "leader.forwardMessage" &&
           envelope.kind !== "leader.forwardEditedMessage" &&
+          envelope.kind !== "leader.forwardedUpdatesPersisted" &&
           envelope.kind !== "leader.replaceFollowerTarget") ||
         envelope.recipientInstanceId !== deps.instanceId
       ) {
@@ -994,6 +1016,8 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
           message: "Telegram bus follower has no active context.",
         };
       }
+      let shouldFlush = false;
+      activeForwardedHandlers += 1;
       try {
         if (envelope.kind === "leader.forwardCallback") {
           await deps.handleForwardedCallback(
@@ -1022,6 +1046,10 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
             envelope.message as TMessage,
             ctx,
           );
+        } else if (envelope.kind === "leader.forwardedUpdatesPersisted") {
+          // The deferred replacement is released only after the leader has
+          // persisted its Telegram offset and this envelope unwinds.
+          shouldFlush = true;
         } else {
           if (!deps.handleReplaceTarget) {
             throw new Error(
@@ -1049,6 +1077,10 @@ export function createTelegramBusForwardedUpdateReceiverRuntime<
               ? error.message
               : "Telegram bus follower dispatch failed.",
         };
+      } finally {
+        activeForwardedHandlers -= 1;
+        if (shouldFlush) flushRequested = true;
+        scheduleFlushWhenIdle();
       }
     },
   });

@@ -34,7 +34,9 @@ Keep this boundary explicit:
 
 - Do not use raw TTY injection, ANSI terminal clearing, private TUI container mutation, or a shadow `pi` subprocess to simulate interactive commands.
 - Do not treat Telegram as a generic remote shell for every Pi slash command.
-- Commands that require interactive session replacement or TUI rerendering, such as a true Telegram `/new`, need a public Pi API that invokes the same runtime path as the terminal command.
+- Telegram `/new` uses only the optional narrow host-registered `registerTelegramHostNewSession` capability. The host provider must invoke Pi's official session-replacement path; pi-telegram retains no `ExtensionContext` and reports unavailable when the provider is absent.
+- A trusted host may register exactly one household group plus exactly two actor ids and stable labels before extension imports execute. This policy replaces personal pairing for that runtime: default routing authorizes exact target plus exact actor, keeps one shared session/queue, and disables Guest Mode and private-chat Threaded Mode. It is not a user-editable `telegram.json` setting.
+- Household `/new` renders a group-targeted inline confirmation and accepts only an authorized callback before requesting host session replacement. Confirmation re-evaluates all ordinary replacement guards; classic personal mode preserves immediate `/new` behavior.
 - A separate PTY supervisor or daemon could choose to own those risks, but that would be a different product mode rather than this extension's runtime contract.
 
 The repository uses a **Flat Domain DAG**:
@@ -108,7 +110,7 @@ Telegram configuration lives in `~/.pi/agent/telegram.json`. Polling ownership l
 - Session start schedules Telegram polling resume asynchronously only when the existing lock already points at the current `pid`/`cwd`, or when a stale same-`cwd` lock can be safely replaced after process restart. Startup and `/resume` should not wait on Telegram leader election, Bot API probes, poller handoff, or thread reconciliation before restoring the Pi session.
 - Pi `print`/`json` run modes stay passive: they do not start or resume Telegram polling even if a lock is present. Older Pi runtimes without `ctx.mode` keep the previous compatibility behavior.
 - Inherited child sessions that see the same `telegram.json` but do not own the `pid`/`cwd` lock must not auto-start polling or call `getUpdates` unless the operator force-takes ownership.
-- Session replacement suspends polling/watchers without releasing ownership so the next session-start hook in the same process can resume. A registered follower snapshots its assigned target into a short-lived same-process handoff, stops the old receiver/heartbeat, and automatically re-registers the new session context through the live leader without marking or replacing its Telegram thread.
+- Session replacement suspends polling/watchers without releasing ownership so the next session-start hook in the same process can resume. The replacement handoff preserves the selected named profile and restores it before follower refresh or completion delivery, so a fresh extension runtime cannot send through the default profile's bot. A registered follower also snapshots its assigned target, stops the old receiver/heartbeat, and automatically re-registers the new session context through the live leader without marking or replacing its Telegram thread.
 - Live polling owners require explicit takeover confirmation.
 - Long-lived polling timers use snapshotted ownership context and stop local polling when the lock no longer points at their own process.
 - `locks.json` owns only external Telegram control/polling. Local extension and queue state are per Pi instance: losing the lock stops live Telegram control here, but does not drain or silence this instance's accepted queue, previews, final delivery, or dispatch.
@@ -119,6 +121,8 @@ Deleting `locks.json` resets runtime ownership without deleting Telegram configu
 ### Threaded Mode Multi-Instance Bus
 
 Telegram private-chat Threaded Mode is the public switch for multi-instance Telegram operation. Classic single-DM polling is the base mode. When Telegram private-chat threads are available for the bot, the bridge enables the local leader/follower bus automatically; when threads are unavailable or later disabled, the bridge returns to classic single-DM polling as a first-class mode.
+
+The host-authorized household group is deliberately outside Threaded Mode. It is one shared group target backed by one Pi session and queue. The bridge does not probe `getMe.has_topics_enabled`, create private-chat topics, or start the multi-instance bus for that surface. This keeps the household conversation model separate from the private-DM multi-session model.
 
 Named Telegram profiles are orthogonal to Threaded Mode. The selected profile chooses the bot/session slice (`botToken`, `botId`, `botUsername`, `allowedUserId`, `lastUpdateId`) and scopes singleton locks, diagnostics logs, state files, thread/bus owner keys, and leader/follower IPC endpoints; it must not change the Threaded Mode rules. Within one selected profile, leader/follower election, bus transport, thread provisioning, routing, ownership forwarding, cleanup, and runtime diagnostics behave exactly as they do for the default profile. A different selected profile is a parallel bot runtime: its locks, `tmp/telegram/state.<profile>.json`, `tmp/telegram/logs.<profile>.jsonl`, `tmp/telegram/logs.<profile>._prev.jsonl`, thread bindings, Unix sockets, and Windows named pipes are isolated from the default profile and from other named profiles while shared bridge settings remain top-level/global. The default profile preserves legacy state, log, socket, and named-pipe paths for compatibility.
 
@@ -151,8 +155,8 @@ All inbound updates are gated by the configured authorized user id.
 ### Inbound Turn Flow
 
 1. Poll updates through `getUpdates`.
-2. Persist update offsets only after successful handling; repeated handler failures are bounded.
-3. Filter to the paired private user; guest-mode updates require an existing paired user and cannot establish first pairing.
+2. Persist update offsets only after successful handling; repeated handler failures are bounded. Deferred `/new` replacement is flushed only after this persistence completes for a polling owner; for a follower, the leader sends an authenticated `leader.forwardedUpdatesPersisted` confirmation only after offset persistence, and the follower flushes after that envelope unwinds.
+3. Apply the active authorization model: classic mode filters to the paired private user, while household mode requires the exact configured group/supergroup and one of the two configured human actors. Household DMs, foreign targets, outsiders, bots, anonymous/channel authors, migration events, and unverifiable edits/callbacks/reactions are ignored. Guest-mode updates require classic pairing and cannot establish first pairing.
 4. Dispatch owned callbacks and controls before fallback prompt forwarding.
 5. Coalesce media groups and likely split long text when needed.
 6. Download files into `~/.pi/agent/tmp/telegram` with size limits and partial-download cleanup.
@@ -189,7 +193,16 @@ Dispatch requires:
 
 A dispatched prompt remains queued until `agent_start` consumes it. This keeps the active Telegram turn bound for previews, attachments, aborts, and final replies.
 
-Post-agent-end queue dispatch uses a session-bound deferred dispatcher. It is activated on session start, clears timers on shutdown, and skips callbacks from older generations before touching `ExtensionContext`. Dispatch stays session-bound after polling ownership moves elsewhere. When a queued Telegram prompt is forwarded into Pi, it uses Pi's explicit `followUp` delivery option so Telegram input preserves the existing non-steering queue contract even if Pi is still settling active work.
+If the trusted host registers prompt preparation, dispatch awaits it before calling `sendUserMessage`. The complete prompt remains in the queue and durable inbox during that wait. Preparation rejection leaves it available for watchdog retry; a reported session replacement stops the old dispatcher and lets the fresh runtime replay the durable turn. Shutdown-time queue clearing does not reconcile that one in-flight preparation away. This is the narrow asynchronous seam used by hosts that need a lifecycle decision without exposing Pi internals or prompt content to the capability.
+
+Durable inbox replay runs on every session start and is idempotent by the stable
+chat/source-message turn key. This lets same-process replacement recover the
+triggering turn immediately without duplicating a turn already admitted by
+polling or an earlier replay.
+
+For the lifetime of each extension session, pi-telegram also publishes the same bounded replacement-readiness decision used by `/new`. Host-injected work must consult it before replacement. Jobs are blocked by any queued Telegram item; Telegram preparation ignores only queue occupancy because its own triggering turn intentionally remains there, while every other idle, pending-message, active-turn, pending-dispatch, compaction, and replacement guard still applies.
+
+Post-agent-end queue dispatch uses a session-bound deferred dispatcher. It is activated on session start, clears timers on shutdown, and skips callbacks from older generations before touching `ExtensionContext`. Dispatch stays session-bound after polling ownership moves elsewhere. Queued Telegram prompts are forwarded as normal user turns only after every readiness and optional host-preparation guard succeeds.
 
 ### Controls And Menus
 
@@ -203,6 +216,7 @@ Immediate controls:
 - `/next` dispatches the next queued turn, aborting Pi first when needed.
 - `/abort` aborts active work while preserving queued items. Abort-history preservation is enabled only for Telegram-owned active turns; later local/non-Telegram agent starts clear stale abort-history mode so the next Telegram prompt appends instead of absorbing old queued turns as history.
 - `/stop` aborts and clears waiting Telegram queue items.
+- `/new` is consumed immediately after checking idle, pending-message, active-turn, dispatch, queue, compaction, duplicate-replacement, and host-capability guards. Accepted requests preserve the exact target and defer the host call to the owner-specific flush seam.
 
 Queued controls:
 
@@ -233,11 +247,12 @@ Assistant delivery guarantees:
 
 - Model-authored Markdown is the source of truth; the bridge does not pre-render assistant Markdown to HTML unless the operator selects `assistant.rendering: "html"` for compatibility.
 - Before native Rich Markdown delivery, the bridge normalizes known Bot-API-fragile source forms without changing visible meaning, including space-after-marker blockquotes and dollar-prefixed ticker atoms that Telegram may otherwise treat as unterminated math.
-- Prompt context blocks use compact metadata (`[tag|key:value]`) as the stable inbound contract. `[telegram...]` names the current surface only: owner/current turns use `[telegram]` or `[telegram|thread:<name>]`; guest-mode turns use `[telegram|guest:<group-title-or-peer-username-or-id>]`. In a private Guest Mode turn the paired owner's `from` identity is never the guest: an explicit replied peer wins, then the remote private-chat identity, then non-owner caller metadata; username falls back to the remote display name and numeric id. Source authors for quoted/forwarded material and their files are carried by `[reply|from:<username-or-id>]`, `[forward|from:<username-or-id>]`, and `[attachments|from:<username-or-id>]`, while plain `[attachments]` remains current-turn attachments and is ordered before reply/forward/source context.
+- Prompt context blocks use compact metadata (`[tag|key:value]`) as the stable inbound contract. `[telegram...]` names the current surface only: owner/current turns use `[telegram]` or `[telegram|thread:<name>]`; household turns use `[telegram|actor:<stable-host-label>]`; guest-mode turns use `[telegram|guest:<group-title-or-peer-username-or-id>]`. Household queue records retain the numeric actor id only for authorization and re-authorize the actor id/label/target tuple before durable replay; mutable Telegram names never become prompt identity. In a private Guest Mode turn the paired owner's `from` identity is never the guest: an explicit replied peer wins, then the remote private-chat identity, then non-owner caller metadata; username falls back to the remote display name and numeric id. Source authors for quoted/forwarded material and their files are carried by `[reply|from:<username-or-id>]`, `[forward|from:<username-or-id>]`, and `[attachments|from:<username-or-id>]`, while plain `[attachments]` remains current-turn attachments and is ordered before reply/forward/source context.
 - Quoted rich replies use Telegram `rich_message` blocks as the prompt-context source when available, so `[reply]` context receives rendered plain text instead of raw `InputRichMessage.markdown` fallback text.
 - Long native Markdown replies are split only at Telegram Rich Message transport limits; oversized fenced code, display-math, and fully wrapped inline-formatting blocks are rewrapped per chunk so persisted Rich Markdown chunks remain structurally valid.
 - When Draft previews are enabled, streaming previews pass structurally closed assistant Markdown prefixes through to `sendRichMessageDraft` with ownership checks, voice suppression, and serialized flushes. Unclosed inline spans, links, fenced code, comments, and display-math blocks are held back until a safe boundary exists. Draft failures are recorded and the failing frame is skipped instead of degrading to raw plain-message previews, because partial Markdown can be invalid while the final message remains valid.
 - Preview flushes are serialized so older edits cannot race newer drafts; final delivery waits for active draft flushes and does not perform a post-final draft-clear call.
+- When `assistant.toolActivity` is enabled (default), the first `tool_execution_start` of an owned Telegram turn posts one quiet HTML status message that is edited in place as tools progress (last six tool lines with compact argument hints plus a tool-count/elapsed footer). Edits are single-flight with a 2s minimum interval, unchanged text skips the API call, guest queries and unowned turns are excluded, delivery errors quiesce the message for the rest of the turn, and `agent_end` deletes it before the final reply is delivered.
 
 UI/compat rendering guarantees:
 
@@ -299,7 +314,7 @@ This is limited to Telegram-owned runs. If Pi is busy with non-Telegram work, th
 
 ## Shutdown And Timer Lifecycle
 
-`session_shutdown` is the hard boundary for session-bound runtime work. It suspends Telegram polling through the locked polling runtime, aborts the poll controller, stops native typing, unbinds deferred queue dispatch, clears pending media/text-group input, clears preview state, clears active turns, and drops the active abort handler.
+`session_shutdown` is the hard boundary for session-bound runtime work. It suspends Telegram polling through the locked polling runtime, aborts the poll controller, stops native typing, unbinds deferred queue dispatch, clears pending media/text-group input, clears preview state, clears active turns, and drops the active abort handler. If shutdown occurs inside host prompt preparation, local queue state is still cleared but durable-inbox removal is deferred so the replacement session can replay the triggering turn.
 
 Non-critical timers are `unref()`ed so print/headless processes are not kept alive only by Telegram housekeeping. This includes typing keepalive intervals, bounded typing-idle waits, deferred queue dispatch, media/text-group debounce windows, preview flush timers, and polling retry sleeps. Polling retry sleep is abort-aware, so shutdown does not wait for the normal retry delay after a polling error.
 

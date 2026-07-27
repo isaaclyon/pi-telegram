@@ -192,6 +192,7 @@ test("Package exports expose only stable public domains", () => {
 
   assert.deepEqual(packageJson.exports, {
     ".": "./index.ts",
+    "./inbox": "./api/inbox.ts",
     "./inbound": "./api/inbound.ts",
     "./outbound": "./api/outbound.ts",
     "./updates": "./api/updates.ts",
@@ -200,6 +201,7 @@ test("Package exports expose only stable public domains", () => {
     "./status": "./api/status.ts",
     "./voice": "./api/voice.ts",
     "./keyboard": "./api/keyboard.ts",
+    "./host": "./api/host.ts",
   });
 });
 

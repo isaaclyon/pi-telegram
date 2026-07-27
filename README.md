@@ -4,11 +4,11 @@
 
 **A Telegram companion hub for live Pi sessions.**
 
-`pi-telegram` turns a private Telegram DM into a mobile operator surface for Pi. It accepts prompts, queues work, streams readable previews, delivers final replies and files, exposes safe controls, and lets companion extensions add Telegram-native capabilities without owning a second bot loop.
+`pi-telegram` turns a private Telegram DM—or an explicitly host-authorized household group—into a mobile operator surface for Pi. It accepts prompts, queues work, streams readable previews, delivers final replies and files, exposes safe controls, and lets companion extensions add Telegram-native capabilities without owning a second bot loop.
 
 It is a **runtime adapter**, not a remote terminal. Start or supervise work in the Pi TUI, then continue from Telegram while away from the keyboard. The bridge preserves Pi session semantics instead of pretending Telegram is a PTY, shell, or process launcher. That boundary is the product: Telegram gets safe runtime handles, not raw terminal power.
 
-This repository is an actively maintained fork of [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram). It started from upstream commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc) and has since diverged substantially.
+This repository is a host-integration fork of [`llblab/pi-telegram`](https://github.com/llblab/pi-telegram), itself derived from `badlogic/pi-telegram`. It stays close to llblab releases while adding narrow host capabilities for same-target Telegram `/new` and one fail-closed household group surface.
 
 ## Install
 
@@ -18,10 +18,16 @@ From npm:
 pi install npm:@llblab/pi-telegram
 ```
 
-From git:
+From the llblab git repository:
 
 ```bash
 pi install git:github.com/llblab/pi-telegram
+```
+
+For the host-backed `/new` capability, install the reviewed fork commit exactly rather than a floating branch:
+
+```bash
+pi install git:github.com/isaaclyon/pi-telegram#<reviewed-full-commit-sha>
 ```
 
 ## Quick Start
@@ -61,6 +67,20 @@ Open the bot DM and send:
 
 The first Telegram user to message the bot becomes the allowed owner. Other users are ignored.
 
+### Host-authorized household group
+
+A host may replace personal pairing with exactly one private Telegram group shared by exactly two allowlisted people. This is a host policy, not a `telegram.json` option: the host registers the exact negative group chat id, both numeric Telegram user ids, and stable prompt labels before the extension starts. In this mode the bridge:
+
+- admits only messages, edits, callbacks, and reactions whose target and actor both match that policy;
+- rejects DMs, other groups or channels, bots, anonymous administrators, channel-authored updates, group migration events, and updates whose actor cannot be verified;
+- attributes accepted turns as `[telegram|actor:Isaac]` or `[telegram|actor:Emma]` using host-owned stable labels, never mutable Telegram names;
+- preserves the group target and actor identity through queue persistence, edits, media grouping, buttons, replay, and replies;
+- disables personal pairing, Guest Mode admission, and private-chat Threaded Mode for that bot runtime.
+
+Because both household actors share one Pi history, `/new` is confirmation-gated in this mode: the command posts an inline warning and only an authorized `Start shared session` callback requests replacement. Personal-DM `/new` remains immediate after its existing idle/queue safety checks.
+
+Create the shared bot with BotFather, add it to the intended private group, and decide whether it should receive ordinary messages. Telegram privacy mode enabled means the bot generally sees commands, mentions, and replies; use BotFather `/setprivacy` → **Disable** only if the household wants every ordinary group message to reach the bot. A basic group may migrate to a supergroup and receive a new chat id; the bridge deliberately fails closed after migration until the host policy is updated and the runtime is restarted. Tokens and numeric ids are never rendered in status output.
+
 ## What It Feels Like
 
 - Start a task in the terminal, walk away, and keep supervising it from your phone.
@@ -94,6 +114,7 @@ The first Telegram user to message the bot becomes the allowed owner. Other user
 | Prompt templates | Run Pi prompt templates as Telegram-safe commands such as `/fix_tests`. | Reusable local workflows become phone-accessible without exposing arbitrary terminal commands. |
 | Model and thinking | Switch model or reasoning level from Telegram through safe continuation flows. | Mobile control can adjust execution strategy without tearing down the current session. |
 | Compaction | Confirm `/compact`, show native active status during compaction, and preserve Telegram-owned turn semantics. | Context maintenance is visible and safe from the phone. |
+| Fresh sessions | Use `/new` to request Pi's official same-session replacement in the current Telegram thread when the host capability is installed. | A fresh session preserves the exact Telegram target and named bot profile without TUI or subprocess tricks. |
 | Draft previews | Show Telegram's native `…typing` indicator whenever the connected instance is doing agent work, or enable Rich Draft previews for streamed answer text. | Local prompts, Telegram turns, and autonomous continuations remain visibly active while draft visibility stays independent from final rendering. |
 | Assistant rendering | Choose Native Rich Markdown or legacy Markdown-to-HTML for final assistant replies. | Renderer compatibility is explicit instead of being conflated with draft previews. |
 | Bridge UI rendering | Render tool rows, reasoning/technical steps, menus, queue controls, status, settings, diagnostics, and sections through explicit Telegram HTML/plain UI. | Harness-owned surfaces remain operationally predictable and visually distinct from model-authored answers. |
@@ -131,6 +152,7 @@ Use these in the bot DM.
 | --- | --- |
 | `/start` | Pair when needed and open the main operator menu |
 | `/compact` | Confirm and run session compaction when safe |
+| `/new` | Start a fresh Pi session in this Telegram thread when the host capability is available and all safety guards are clear |
 | `/next` | Dispatch the next queued turn, aborting first if needed |
 | `/continue` | Enqueue a priority continuation prompt |
 | `/abort` | Abort the active run while preserving the queue |
@@ -208,7 +230,7 @@ Most controls live in Pi commands or the Telegram menu. Environment variables re
 | Inbound file limit | `PI_TELEGRAM_INBOUND_FILE_MAX_BYTES`, `TELEGRAM_MAX_FILE_SIZE_BYTES` |
 | Outbound attachment limit | `PI_TELEGRAM_OUTBOUND_ATTACHMENT_MAX_BYTES`, `TELEGRAM_MAX_ATTACHMENT_SIZE_BYTES` |
 
-Defaults are chosen for ordinary private-bot use: saved config in `~/.pi/agent`, inbound temp files in `~/.pi/agent/tmp/telegram`, `assistant: { rendering: "rich", draftPreviews: false }` for assistant answer output, and native Telegram active status for long-running turns.
+Defaults are chosen for ordinary private-bot use: saved config in `~/.pi/agent`, inbound temp files in `~/.pi/agent/tmp/telegram`, `assistant: { rendering: "rich", draftPreviews: false, toolActivity: true }` for assistant answer output, a transient in-place-edited tool-activity status message during tool-heavy turns (deleted when the final answer arrives; disable with `assistant.toolActivity: false`), and native Telegram active status for long-running turns.
 
 ## Extension Platform
 
@@ -216,6 +238,7 @@ Companion extensions can integrate with Telegram without owning polling or trans
 
 - Register Telegram slash commands.
 - Add menu sections and settings surfaces.
+- Open registered sections directly from slash commands or active-turn companion workflows without queueing a model turn.
 - Add compact status rows.
 - Handle update/callback namespaces.
 - Provide inbound preprocessing handlers.
@@ -232,7 +255,7 @@ Stable public entrypoints are documented in [Public API](./docs/public-api.md), 
 - Pretend Telegram is a terminal or PTY.
 - Forward arbitrary Telegram slash commands into the Pi TUI.
 - Inject raw TTY input or terminal-control sequences.
-- Replace Pi session lifecycle without an official Pi API.
+- Replace Pi session lifecycle through private internals, TUI input, or a shadow process. `/new` uses only the narrow host-registered capability that delegates to Pi's official replacement path; without that capability it reports unavailable.
 - Let non-owner Telegram users control the bridge.
 
 Telegram is a companion surface around a live Pi runtime, not a second runtime.

@@ -900,7 +900,10 @@ test("Telegram bridge API runtime exposes typed Bot API helpers", async () => {
     { update_id: 10 },
   ]);
   assert.equal(
-    await runtime.setMyCommands([{ command: "start", description: "Start" }]),
+    await runtime.setMyCommands(
+      [{ command: "start", description: "Start" }],
+      { type: "chat", chat_id: -100123 },
+    ),
     true,
   );
   assert.equal(await runtime.sendChatAction(1, "typing"), true);
@@ -952,7 +955,10 @@ test("Telegram bridge API runtime exposes typed Bot API helpers", async () => {
     { method: "getUpdates", body: { offset: 1 } },
     {
       method: "setMyCommands",
-      body: { commands: [{ command: "start", description: "Start" }] },
+      body: {
+        commands: [{ command: "start", description: "Start" }],
+        scope: { type: "chat", chat_id: -100123 },
+      },
     },
     { method: "sendChatAction", body: { chat_id: 1, action: "typing" } },
     { method: "sendChatAction", body: { chat_id: 2, action: "typing" } },

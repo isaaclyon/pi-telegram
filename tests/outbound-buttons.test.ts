@@ -81,6 +81,22 @@ test("Button prompt turn preserves prompt text and queue metadata", () => {
   assert.equal(turn.statusSummary, "Run");
 });
 
+test("Button prompt turn preserves a trusted household actor", () => {
+  const turn = createTelegramButtonPromptTurn({
+    chatId: -100123,
+    replyToMessageId: 20,
+    queueOrder: 30,
+    action: { text: "Run", prompt: "Run this now." },
+    target: { chatId: -100123 },
+    actor: { userId: 202, label: "Emma" },
+  });
+  assert.equal(turn.actorLabel, "Emma");
+  assert.equal(turn.actorUserId, 202);
+  assert.deepEqual(turn.content, [
+    { type: "text", text: "[telegram|actor:Emma] Run this now." },
+  ]);
+});
+
 test("Button callback handler enqueues owned actions and consumes expired buttons", async () => {
   const answered: string[] = [];
   const enqueued: unknown[] = [];

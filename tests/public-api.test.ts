@@ -54,6 +54,7 @@ test("Public package subpaths expose the stable companion-extension API", async 
   assert.deepEqual(Object.keys(commands).sort(), ["registerTelegramCommand"]);
   assert.deepEqual(Object.keys(sections).sort(), [
     "getTelegramSectionDiagnostics",
+    "presentTelegramSection",
     "registerTelegramSection",
   ]);
   assert.deepEqual(Object.keys(status).sort(), [

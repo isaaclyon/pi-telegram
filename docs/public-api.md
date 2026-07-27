@@ -22,6 +22,10 @@ import { registerTelegramCommand } from "@llblab/pi-telegram/commands";
 import { registerTelegramInboundHandler } from "@llblab/pi-telegram/inbound";
 import { registerTelegramOutboundHandler } from "@llblab/pi-telegram/outbound";
 import {
+  registerTelegramHostHouseholdGroup,
+  registerTelegramHostNewSession,
+} from "@llblab/pi-telegram/host";
+import {
   registerTelegramVoiceSynthesisProvider,
   registerTelegramVoiceTranscriptionProvider,
 } from "@llblab/pi-telegram/voice";
@@ -50,10 +54,13 @@ Stable commands inside the paired Telegram DM:
 - `/continue` — enqueue a priority `continue` prompt.
 - `/abort` — abort active work and keep the queue; abort-history is scoped to Telegram-owned active turns.
 - `/stop` — abort active Telegram-owned work and clear waiting Telegram queue items.
+- `/new` — request an official same-session replacement in the current Telegram target when the host capability is available. It is consumed as a command, never queued as a prompt.
+
+`/new` admission requires an idle Pi host with no pending Pi messages, active Telegram turn, pending dispatch, queued Telegram items, compaction, or duplicate replacement. The command preserves the exact `{ chatId, threadId? }` target. A polling owner starts replacement only after the accepted update offset is persisted; a follower starts it only after its forwarded inbound handler unwinds. If the host capability is absent, the command replies that new sessions are unavailable.
 
 Hidden compatibility shortcuts may open sections directly: `/help`, `/status`, `/model`, `/thinking`, `/queue`, and `/settings`.
 
-This command surface is a mobile companion subset, not a raw terminal-command bridge. Commands that depend on Pi's interactive runtime owning session replacement, TUI transcript clearing, or arbitrary slash-command dispatch stay out of the stable Telegram API unless Pi exposes a safe public extension hook for them.
+This command surface is a mobile companion subset, not a raw terminal-command bridge. `/new` is the sole session-replacement control and is limited to the narrow host capability documented below; arbitrary slash-command dispatch and TUI manipulation remain outside the API.
 
 ### Tools and assistant-authored actions
 
@@ -66,6 +73,39 @@ This command surface is a mobile companion subset, not a raw terminal-command br
 Prompt guidance is context-aware: local/TUI prompts see only explicit direct-delivery guidance, while Telegram-originated turns receive the full action-comment syntax and phone-width output contract.
 
 See [Outbound Handlers](./outbound.md) for exact markup forms.
+
+## Host Capabilities
+
+Import from `@llblab/pi-telegram/host` only from the trusted Pi host integration that owns runtime lifecycle and authorization policy:
+
+```ts
+const unregister = registerTelegramHostNewSession(() => runtime.newSession());
+
+const unregisterPreparation = registerTelegramHostPromptPreparation(
+  async ({ trigger }) => prepareInboundPrompt(trigger),
+);
+
+const unregisterHousehold = registerTelegramHostHouseholdGroup({
+  kind: "household-group",
+  chatId: -1001234567890,
+  actors: [
+    { userId: 111111111, label: "Isaac" },
+    { userId: 222222222, label: "Emma" },
+  ],
+});
+```
+
+The session callable is deliberately narrow: it returns `{ cancelled: boolean }` and must delegate to the same official session-replacement path used by Pi's terminal command. A non-cancelled provider resolution means the official host replacement completed and rebound; provider errors reject the request. pi-telegram stores only a short-lived target handoff and does not retain an `ExtensionContext`; the host owns context binding and lifecycle replacement. Registration is optional, so `/new` reports an unavailable response when no host capability is present.
+
+The optional prompt-preparation callable is similarly narrow. Immediately before a queued prompt is handed to Pi, it receives only `{ trigger: "telegram" }` and returns `{ sessionReplaced: boolean }`. Prompt text, actor identifiers, targets, attachments, and the Pi runtime are not exposed. While the promise is pending, pi-telegram keeps the complete turn queued and durable and admits no second dispatcher. Rejection leaves the turn queued for retry. A `sessionReplaced: true` result tells the stale dispatcher not to hand off; the fresh extension runtime replays the same durable turn and prepares it again before normal dispatch.
+
+The extension internally publishes a bounded session-replacement readiness guard for trusted-host use; it is not a package API export. This lets host-injected jobs reuse the active session's queue, compaction, pending-message, active-turn, and dispatch guards rather than replacing across Telegram work. The result is only a fixed blocking reason or `undefined`, never queue contents or runtime access.
+
+The household policy is also deliberately narrow. It accepts one negative safe-integer group/supergroup chat id and exactly two distinct positive safe-integer user ids with distinct stable labels. Labels are host-owned prompt identity and must use safe identifier characters; Telegram display names and usernames remain untrusted presentation data. Once registered, exact target plus exact actor authorization replaces pairing for default routing. Unverifiable authorship, anonymous/channel authorship, DMs, foreign chats, outsiders, bots, and migration updates fail closed. Durable turns retain the actor id, label, and target and are authorized again before replay. Private-chat Threaded Mode and Guest Mode do not activate on this surface.
+
+The policy also changes `/new` interaction, not its host capability: a household command first posts an inline confirmation warning that both actors share the history, and only an authorized confirmation callback invokes the same narrow replacement provider. Every readiness guard is checked again at confirmation time. Personal-DM behavior remains unchanged.
+
+The process-global host registry allows the session provider, prompt preparation, and household policy to coexist, but permits only one active registration of each kind per JavaScript realm. Every disposer is identity-safe. Register host capabilities before loading the pi-telegram extension and dispose them with the bridge runtime.
 
 ## Configuration API
 
@@ -156,7 +196,7 @@ const off = registerTelegramCommand({
   showInMenu: true,
   emoji: "🧩",
   handler: async (ctx) => {
-    await ctx.enqueuePrompt(`Review this work: ${ctx.args}`);
+    await ctx.openSection("@scope/review");
   },
 });
 ```
@@ -168,7 +208,7 @@ Contract:
 - Duplicate extension command names are rejected. The disposer removes only its own command registration.
 - Routing precedence is built-in bridge commands first, registered extension commands second, and prompt-template aliases after that. This lets an extension intentionally claim a command name; prompt-template owners can resolve collisions by renaming the template alias.
 - `showInMenu` defaults to `false`. When `true`, `emoji` is required and the command appears in `/start` help with that marker; it also joins Bot API command sync only when `description` is provided, because Telegram command-list entries require descriptions. The emoji is prefixed to the Bot API description as well. Workflow/product commands should opt in deliberately instead of expanding the core command row by default.
-- The command context currently provides `name`, `args`, `reply(text)`, and `enqueuePrompt(prompt)`. Use `enqueuePrompt()` when a command should create normal queued Pi work rather than perform immediate Telegram-side handling.
+- The command context provides `name`, `args`, `reply(text)`, `openSection(sectionId)`, and `enqueuePrompt(prompt)`. Use `openSection()` for an already registered Telegram-native section, or `enqueuePrompt()` when a command should create normal queued Pi work.
 - Handler failures are isolated: the bridge records a `telegram-command` runtime diagnostic, sends a compact failure reply, and keeps Telegram polling/routing alive.
 
 Core commands stay reserved for bridge lifecycle, transport ownership, queue safety, and essential operator controls. Opinionated workflow commands should live in companion extensions through this registry.
@@ -206,6 +246,7 @@ Contract:
 - `ctx.callbackData(action, payload?)` builds compact `section:` callbacks and validates Telegram's 64-byte limit.
 - `ctx.edit()` auto-prepends the correct Back/Main-menu row. `ctx.open()` sends a standalone chat message without auto-navigation.
 - Section dynamic-label, render, and callback errors are isolated, surfaced as callback popups where applicable, and reflected by `getTelegramSectionDiagnostics()` until the matching surface succeeds.
+- `presentTelegramSection(sectionId)` may present a registered section from companion code while an active Telegram turn owns the delivery target. It rejects outside an active Telegram turn instead of guessing a destination.
 
 Full behavior: [Extension Sections](./sections.md).
 

@@ -34,6 +34,7 @@ import {
   type TelegramUpdateHandler,
   type TelegramUpdateHandlerRegistry,
 } from "../lib/updates.ts";
+import { registerTelegramHostHouseholdGroup } from "../lib/host.ts";
 
 const TEST_CONTEXT = "ctx";
 const REGISTRY_KEY = "__piTelegramUpdateHandlerRegistry__";
@@ -380,6 +381,122 @@ test("Update routing extracts private human messages and edited messages separat
     },
   });
   assert.ok(editedMessage);
+});
+
+test("household policy authorizes only the exact group and maps trusted actors", () => {
+  const dispose = registerTelegramHostHouseholdGroup({
+    kind: "household-group",
+    chatId: -100123,
+    actors: [
+      { userId: 101, label: "Isaac" },
+      { userId: 202, label: "Emma" },
+    ],
+  });
+  try {
+    const isaac = buildTelegramUpdateFlowAction(
+      {
+        message: {
+          chat: { id: -100123, type: "supergroup" },
+          from: { id: 101, is_bot: false },
+          message_id: 1,
+        },
+      },
+      undefined,
+    );
+    assert.equal(isaac.kind, "message");
+    if (isaac.kind === "message") {
+      assert.equal(isaac.authorization.kind, "allow");
+      assert.equal(isaac.actorLabel, "Isaac");
+    }
+
+    const emmaEdit = buildTelegramUpdateFlowAction(
+      {
+        edited_message: {
+          chat: { id: -100123, type: "supergroup" },
+          from: { id: 202, is_bot: false },
+          message_id: 2,
+        },
+      },
+      undefined,
+    );
+    assert.equal(emmaEdit.kind, "edited-message");
+    if (emmaEdit.kind === "edited-message") {
+      assert.equal(emmaEdit.actorLabel, "Emma");
+    }
+  } finally {
+    dispose();
+  }
+});
+
+test("household policy rejects DMs, foreign groups, outsiders, anonymous admins, and migrations", () => {
+  const dispose = registerTelegramHostHouseholdGroup({
+    kind: "household-group",
+    chatId: -100123,
+    actors: [
+      { userId: 101, label: "Isaac" },
+      { userId: 202, label: "Emma" },
+    ],
+  });
+  try {
+    const rejectedMessages = [
+      {
+        chat: { id: 101, type: "private" },
+        from: { id: 101, is_bot: false },
+      },
+      {
+        chat: { id: -100999, type: "supergroup" },
+        from: { id: 101, is_bot: false },
+      },
+      {
+        chat: { id: -100123, type: "supergroup" },
+        from: { id: 303, is_bot: false },
+      },
+      {
+        chat: { id: -100123, type: "supergroup" },
+        from: { id: 101, is_bot: false },
+        sender_chat: { id: -100123, type: "supergroup" },
+      },
+      {
+        chat: { id: -100123, type: "group" },
+        from: { id: 101, is_bot: false },
+        migrate_to_chat_id: -100777,
+      },
+    ];
+    for (const message of rejectedMessages) {
+      assert.deepEqual(
+        buildTelegramUpdateFlowAction({ message }, undefined),
+        { kind: "ignore" },
+      );
+    }
+    assert.deepEqual(
+      buildTelegramUpdateFlowAction(
+        {
+          callback_query: {
+            id: "private-callback",
+            from: { id: 101, is_bot: false },
+            message: { chat: { id: 101, type: "private" } },
+          },
+        },
+        undefined,
+      ),
+      { kind: "ignore" },
+    );
+    assert.deepEqual(
+      buildTelegramUpdateFlowAction(
+        {
+          guest_message: {
+            guest_query_id: "guest",
+            chat: { id: -100123, type: "supergroup" },
+            from: { id: 101, is_bot: false },
+          },
+        },
+        undefined,
+      ),
+      { kind: "ignore" },
+    );
+  } finally {
+    dispose();
+  }
 });
 
 test("Update routing extracts guest messages without private chat filter", () => {

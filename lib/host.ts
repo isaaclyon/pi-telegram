@@ -1,0 +1,354 @@
+/**
+ * Telegram host capability registry
+ * Zones: pi agent host boundary, public interop
+ * Owns narrow host-provided session replacement, prompt preparation, and household-surface capabilities without exposing Pi runtime internals
+ */
+
+export interface TelegramHostNewSessionResult {
+  cancelled: boolean;
+}
+
+export type TelegramHostNewSession = () => Promise<TelegramHostNewSessionResult>;
+
+export interface TelegramHostPromptPreparationInput {
+  trigger: "telegram";
+}
+
+export interface TelegramHostPromptPreparationResult {
+  sessionReplaced: boolean;
+}
+
+export type TelegramHostPromptPreparation = (
+  input: TelegramHostPromptPreparationInput,
+) => Promise<TelegramHostPromptPreparationResult>;
+
+export interface TelegramHostSessionReplacementGuardInput {
+  trigger: "manual" | "telegram" | `job:${string}`;
+}
+
+export type TelegramHostSessionReplacementGuard = (
+  input: TelegramHostSessionReplacementGuardInput,
+) => string | undefined;
+
+export interface TelegramHostHouseholdActor {
+  userId: number;
+  label: string;
+}
+
+export interface TelegramHostHouseholdGroup {
+  kind: "household-group";
+  chatId: number;
+  actors: readonly TelegramHostHouseholdActor[];
+}
+
+export interface TelegramHostHouseholdCommandScope {
+  type: "chat";
+  chat_id: number;
+}
+
+interface TelegramHostRegistry {
+  readonly version: 1;
+  provider?: TelegramHostNewSession;
+  token?: object;
+  householdGroup?: TelegramHostHouseholdGroup;
+  householdToken?: object;
+  promptPreparation?: TelegramHostPromptPreparation;
+  promptPreparationToken?: object;
+  replacementGuard?: TelegramHostSessionReplacementGuard;
+  replacementGuardToken?: object;
+}
+
+const TELEGRAM_HOST_REGISTRY_KEY = Symbol.for(
+  "pi-telegram.host-capability-registry",
+);
+
+function isTelegramHostRegistry(value: unknown): value is TelegramHostRegistry {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const provider = candidate.provider;
+  const token = candidate.token;
+  const householdGroup = candidate.householdGroup;
+  const householdToken = candidate.householdToken;
+  const promptPreparation = candidate.promptPreparation;
+  const promptPreparationToken = candidate.promptPreparationToken;
+  const replacementGuard = candidate.replacementGuard;
+  const replacementGuardToken = candidate.replacementGuardToken;
+  if (candidate.version !== 1) return false;
+  if (provider !== undefined && typeof provider !== "function") return false;
+  if (token !== undefined && (!token || typeof token !== "object")) {
+    return false;
+  }
+  if (
+    householdGroup !== undefined &&
+    (!householdGroup ||
+      typeof householdGroup !== "object" ||
+      !isValidTelegramHostHouseholdGroup(householdGroup))
+  ) {
+    return false;
+  }
+  if (
+    householdToken !== undefined &&
+    (!householdToken || typeof householdToken !== "object")
+  ) {
+    return false;
+  }
+  if (
+    promptPreparation !== undefined &&
+    typeof promptPreparation !== "function"
+  ) {
+    return false;
+  }
+  if (
+    promptPreparationToken !== undefined &&
+    (!promptPreparationToken || typeof promptPreparationToken !== "object")
+  ) {
+    return false;
+  }
+  if (replacementGuard !== undefined && typeof replacementGuard !== "function") {
+    return false;
+  }
+  if (
+    replacementGuardToken !== undefined &&
+    (!replacementGuardToken || typeof replacementGuardToken !== "object")
+  ) {
+    return false;
+  }
+  return (
+    (provider === undefined) === (token === undefined) &&
+    (householdGroup === undefined) === (householdToken === undefined) &&
+    (promptPreparation === undefined) ===
+      (promptPreparationToken === undefined) &&
+    (replacementGuard === undefined) === (replacementGuardToken === undefined)
+  );
+}
+
+function isValidTelegramHostHouseholdGroup(value: unknown): boolean {
+  try {
+    validateTelegramHostHouseholdGroup(value as TelegramHostHouseholdGroup);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getTelegramHostRegistry(): TelegramHostRegistry {
+  const globalStore = globalThis as Record<PropertyKey, unknown>;
+  const existing = globalStore[TELEGRAM_HOST_REGISTRY_KEY];
+  if (existing !== undefined) {
+    if (!isTelegramHostRegistry(existing)) {
+      throw new Error(
+        "Telegram host capability registry is occupied by a malformed or incompatible v1 registry.",
+      );
+    }
+    return existing;
+  }
+  const registry: TelegramHostRegistry = { version: 1 };
+  globalStore[TELEGRAM_HOST_REGISTRY_KEY] = registry;
+  return registry;
+}
+
+export function registerTelegramHostNewSession(
+  newSession: TelegramHostNewSession,
+): () => void {
+  if (typeof newSession !== "function") {
+    throw new TypeError("Telegram host newSession capability must be a function");
+  }
+  const registry = getTelegramHostRegistry();
+  if (registry.provider) {
+    throw new Error(
+      "Telegram host newSession capability is already registered",
+    );
+  }
+  const token = {};
+  registry.provider = newSession;
+  registry.token = token;
+  return () => {
+    if (registry.token !== token) return;
+    delete registry.provider;
+    delete registry.token;
+  };
+}
+
+export function getTelegramHostNewSession(): TelegramHostNewSession | undefined {
+  return getTelegramHostRegistry().provider;
+}
+
+export function registerTelegramHostPromptPreparation(
+  prepare: TelegramHostPromptPreparation,
+): () => void {
+  if (typeof prepare !== "function") {
+    throw new TypeError("Telegram host prompt preparation capability must be a function");
+  }
+  const registry = getTelegramHostRegistry();
+  if (registry.promptPreparation) {
+    throw new Error("Telegram host prompt preparation capability is already registered");
+  }
+  const token = {};
+  registry.promptPreparation = prepare;
+  registry.promptPreparationToken = token;
+  return () => {
+    if (registry.promptPreparationToken !== token) return;
+    delete registry.promptPreparation;
+    delete registry.promptPreparationToken;
+  };
+}
+
+export function getTelegramHostPromptPreparation():
+  | TelegramHostPromptPreparation
+  | undefined {
+  return getTelegramHostRegistry().promptPreparation;
+}
+
+let promptPreparationsInFlight = 0;
+
+export function isTelegramHostPromptPreparationInFlight(): boolean {
+  return promptPreparationsInFlight > 0;
+}
+
+export async function prepareTelegramHostPrompt(): Promise<TelegramHostPromptPreparationResult> {
+  const prepare = getTelegramHostPromptPreparation();
+  if (!prepare) return { sessionReplaced: false };
+  promptPreparationsInFlight += 1;
+  try {
+    return await prepare({ trigger: "telegram" });
+  } finally {
+    promptPreparationsInFlight -= 1;
+  }
+}
+
+export function registerTelegramHostSessionReplacementGuard(
+  guard: TelegramHostSessionReplacementGuard,
+): () => void {
+  if (typeof guard !== "function") {
+    throw new TypeError("Telegram session replacement guard must be a function");
+  }
+  const registry = getTelegramHostRegistry();
+  if (registry.replacementGuard) {
+    throw new Error("Telegram session replacement guard is already registered");
+  }
+  const token = {};
+  registry.replacementGuard = guard;
+  registry.replacementGuardToken = token;
+  return () => {
+    if (registry.replacementGuardToken !== token) return;
+    delete registry.replacementGuard;
+    delete registry.replacementGuardToken;
+  };
+}
+
+export function getTelegramHostSessionReplacementGuard():
+  | TelegramHostSessionReplacementGuard
+  | undefined {
+  return getTelegramHostRegistry().replacementGuard;
+}
+
+function validateTelegramHostHouseholdGroup(
+  policy: TelegramHostHouseholdGroup,
+): TelegramHostHouseholdGroup {
+  if (!policy || typeof policy !== "object" || policy.kind !== "household-group") {
+    throw new TypeError("Telegram host household policy must be a household-group object");
+  }
+  if (!Number.isSafeInteger(policy.chatId) || policy.chatId >= 0) {
+    throw new TypeError("Telegram host household policy requires a negative Telegram group chat id");
+  }
+  if (!Array.isArray(policy.actors) || policy.actors.length !== 2) {
+    throw new TypeError("Telegram host household policy requires exactly two actors");
+  }
+  const userIds = new Set<number>();
+  const labels = new Set<string>();
+  for (const actor of policy.actors) {
+    if (
+      !actor ||
+      typeof actor !== "object" ||
+      !Number.isSafeInteger(actor.userId) ||
+      actor.userId <= 0 ||
+      userIds.has(actor.userId)
+    ) {
+      throw new TypeError("Telegram host household policy requires distinct positive Telegram user ids");
+    }
+    if (
+      typeof actor.label !== "string" ||
+      !/^[A-Z][A-Za-z0-9_-]{0,31}$/.test(actor.label) ||
+      labels.has(actor.label)
+    ) {
+      throw new TypeError("Telegram host household policy requires distinct safe stable actor labels");
+    }
+    userIds.add(actor.userId);
+    labels.add(actor.label);
+  }
+  return {
+    kind: "household-group",
+    chatId: policy.chatId,
+    actors: policy.actors.map((actor) => ({
+      userId: actor.userId,
+      label: actor.label,
+    })),
+  };
+}
+
+export function registerTelegramHostHouseholdGroup(
+  policy: TelegramHostHouseholdGroup,
+): () => void {
+  const validated = validateTelegramHostHouseholdGroup(policy);
+  const registry = getTelegramHostRegistry();
+  if (registry.householdGroup) {
+    throw new Error("Telegram host household group capability is already registered");
+  }
+  const token = {};
+  registry.householdGroup = validated;
+  registry.householdToken = token;
+  return () => {
+    if (registry.householdToken !== token) return;
+    delete registry.householdGroup;
+    delete registry.householdToken;
+  };
+}
+
+export function getTelegramHostHouseholdGroup():
+  | TelegramHostHouseholdGroup
+  | undefined {
+  return getTelegramHostRegistry().householdGroup;
+}
+
+export function getTelegramHostHouseholdCommandScope():
+  | TelegramHostHouseholdCommandScope
+  | undefined {
+  const householdGroup = getTelegramHostHouseholdGroup();
+  return householdGroup
+    ? { type: "chat", chat_id: householdGroup.chatId }
+    : undefined;
+}
+
+export function getTelegramHostHouseholdActorLabel(
+  userId: number | undefined,
+): string | undefined {
+  if (userId === undefined) return undefined;
+  return getTelegramHostHouseholdGroup()?.actors.find(
+    (actor) => actor.userId === userId,
+  )?.label;
+}
+
+export function getTelegramHostHouseholdTarget():
+  | { chatId: number }
+  | undefined {
+  const policy = getTelegramHostHouseholdGroup();
+  return policy ? { chatId: policy.chatId } : undefined;
+}
+
+export function getTelegramHostHouseholdStatus():
+  | { kind: "household-group"; actorLabels: readonly string[] }
+  | undefined {
+  const policy = getTelegramHostHouseholdGroup();
+  return policy
+    ? {
+        kind: "household-group",
+        actorLabels: policy.actors.map(function (actor) {
+          return actor.label;
+        }),
+      }
+    : undefined;
+}
+
+export function isTelegramHostPrivateChatThreadedModeAllowed(): boolean {
+  return getTelegramHostHouseholdGroup() === undefined;
+}

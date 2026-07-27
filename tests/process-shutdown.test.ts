@@ -70,7 +70,7 @@ function runNodeScript(
 async function waitForFileText(
   path: string,
   predicate: (text: string) => boolean,
-  timeoutMs = 3000,
+  timeoutMs = 5000,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

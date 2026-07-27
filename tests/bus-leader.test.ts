@@ -11,6 +11,7 @@ import test from "node:test";
 
 import {
   createTelegramBusFollowerRegistry,
+  createTelegramBusLocalServer,
   sendTelegramBusLocalEnvelope,
 } from "../lib/bus.ts";
 import {
@@ -147,6 +148,60 @@ test("Bus leader compaction preserves a recent binding through follower reload h
     assert.deepEqual(calls, []);
     assert.equal(store.list()[0]?.instanceId, "follower-new");
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Bus leader forwards authenticated persistence confirmations to followers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-leader-persist-confirm-"));
+  const leaderSocketPath = join(dir, "leader.sock");
+  const followerSocketPath = join(dir, "follower.sock");
+  const received: unknown[] = [];
+  const follower = createTelegramBusLocalServer({
+    socketPath: followerSocketPath,
+    handleEnvelope: (envelope) => {
+      received.push(envelope);
+      return { kind: "bus.ack", requestId: envelope.requestId, ok: true };
+    },
+  });
+  const leader = createTelegramBusLocalServer({
+    socketPath: leaderSocketPath,
+    handleEnvelope: createTelegramBusLeaderEnvelopeHandler({
+      followerRegistry: (() => {
+        const registry = createTelegramBusFollowerRegistry();
+        registry.register({
+          instanceId: "follower",
+          busSocketPath: followerSocketPath,
+          connectedAtMs: 1,
+        });
+        return registry;
+      })(),
+      authSecret: "secret",
+    }),
+  });
+  try {
+    await follower.start();
+    await leader.start();
+    const response = await sendTelegramBusLocalEnvelope({
+      socketPath: leaderSocketPath,
+      envelope: {
+        kind: "leader.forwardedUpdatesPersisted",
+        requestId: "leader:confirm",
+        recipientInstanceId: "follower",
+        sentAtMs: 2,
+        auth: "secret",
+      },
+    });
+    assert.deepEqual(response, {
+      kind: "bus.ack",
+      requestId: "leader:confirm",
+      ok: true,
+      message: undefined,
+    });
+    assert.equal((received[0] as { auth?: string }).auth, "secret");
+  } finally {
+    await leader.stop();
+    await follower.stop();
     rmSync(dir, { recursive: true, force: true });
   }
 });

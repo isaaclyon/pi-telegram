@@ -20,15 +20,19 @@ import {
   createTelegramCommandOrPromptRuntime,
   createTelegramCommandTargetQueueRuntime,
   createTelegramCommandTargetRuntime,
+  createTelegramHostSessionReplacementReadinessCheck,
   executeTelegramCommandAction,
   getTelegramCommandExecutionMode,
   getTelegramCommandMessageTarget,
+  getTelegramNewSessionMessageTarget,
   clearTelegramExtensionCommands,
   findTelegramExtensionCommand,
   handleTelegramAbortCommand,
   handleTelegramCompactCommand,
   handleTelegramCompactConfirmationCallback,
   handleTelegramModelCommand,
+  handleTelegramNewSessionCommand,
+  handleTelegramNewSessionConfirmationCallback,
   handleTelegramStatusCommand,
   handleTelegramStopCommand,
   parseTelegramCommand,
@@ -84,6 +88,32 @@ function createBridgeCommandContext(
   } as unknown as ExtensionCommandContext;
 }
 
+test("Host replacement readiness blocks jobs across Telegram state but allows the triggering prompt", () => {
+  let queued = true;
+  let active = false;
+  let pendingReplacement = false;
+  const check = createTelegramHostSessionReplacementReadinessCheck({
+    getContext: () => "ctx",
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    hasActiveTelegramTurn: () => active,
+    hasDispatchPending: () => false,
+    hasQueuedTelegramItems: () => queued,
+    isCompactionInProgress: () => false,
+    hasPendingSessionReplacement: () => pendingReplacement,
+  });
+
+  assert.match(check({ trigger: "job:cron" }) ?? "", /queue/i);
+  assert.equal(check({ trigger: "telegram" }), undefined);
+  active = true;
+  assert.match(check({ trigger: "telegram" }) ?? "", /active/i);
+  active = false;
+  queued = false;
+  pendingReplacement = true;
+  assert.match(check({ trigger: "job:webhook" }) ?? "", /already pending/i);
+  assert.equal(check({ trigger: "manual" }), undefined);
+});
+
 test("Command helpers expose Telegram bot command definitions", () => {
   assert.deepEqual(TELEGRAM_COMMAND_EMOJI.model, "🤖");
   assert.deepEqual(TELEGRAM_COMMAND_EMOJI.thinking, "🧠");
@@ -94,6 +124,7 @@ test("Command helpers expose Telegram bot command definitions", () => {
       description: "🟢 Open menu / Pair bridge",
     },
     { command: "compact", description: "🗜 Compact current session" },
+    { command: "new", description: "🆕 Start fresh session" },
     {
       command: "next",
       description: "⏩ Force next turn",
@@ -114,6 +145,174 @@ test("Command helpers expose Telegram bot command definitions", () => {
   assert.deepEqual(TELEGRAM_BOT_COMMANDS, expectedBuiltins);
 });
 
+test("/new consumes the command, preserves its exact target, and acknowledges acceptance", async () => {
+  const replies: string[] = [];
+  const targets: Array<{ chatId: number; threadId?: number }> = [];
+  const message = { chat: { id: 41 }, message_id: 9, message_thread_id: 73 };
+  await handleTelegramNewSessionCommand(message, {
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    hasActiveTelegramTurn: () => false,
+    hasDispatchPending: () => false,
+    hasQueuedTelegramItems: () => false,
+    isCompactionInProgress: () => false,
+    hasPendingSessionReplacement: () => false,
+    requestNewSession: (target) => {
+      targets.push(target);
+      return { accepted: true };
+    },
+    getMessageTarget: getTelegramNewSessionMessageTarget,
+    sendTextReply: async (text) => {
+      replies.push(text);
+    },
+  });
+  assert.deepEqual(targets, [{ chatId: 41, threadId: 73 }]);
+  assert.deepEqual(replies, ["🆕 Starting a new session in this thread."]);
+});
+
+test("/new requires an explicit household confirmation before replacing shared history", async () => {
+  const replies: string[] = [];
+  const confirmations: Array<{ chatId: number; threadId?: number }> = [];
+  let requests = 0;
+  await handleTelegramNewSessionCommand(
+    { chat: { id: -100123 }, message_id: 9 },
+    {
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      hasActiveTelegramTurn: () => false,
+      hasDispatchPending: () => false,
+      hasQueuedTelegramItems: () => false,
+      isCompactionInProgress: () => false,
+      hasPendingSessionReplacement: () => false,
+      requestNewSession: () => {
+        requests += 1;
+        return { accepted: true };
+      },
+      getMessageTarget: getTelegramNewSessionMessageTarget,
+      requiresConfirmation: () => true,
+      sendConfirmation: async (target) => {
+        confirmations.push(target);
+      },
+      sendTextReply: async (text) => {
+        replies.push(text);
+      },
+    },
+  );
+  assert.equal(requests, 0);
+  assert.deepEqual(confirmations, [{ chatId: -100123, threadId: undefined }]);
+  assert.deepEqual(replies, []);
+});
+
+test("household /new confirmation requests replacement only after authorized callback", async () => {
+  const edits: string[] = [];
+  const answers: string[] = [];
+  const targets: Array<{ chatId: number; threadId?: number }> = [];
+  const handled = await handleTelegramNewSessionConfirmationCallback(
+    {
+      id: "callback-1",
+      data: "new:confirm",
+      message: { chat: { id: -100123 }, message_id: 44 },
+    },
+    {
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      hasActiveTelegramTurn: () => false,
+      hasDispatchPending: () => false,
+      hasQueuedTelegramItems: () => false,
+      isCompactionInProgress: () => false,
+      hasPendingSessionReplacement: () => false,
+      requestNewSession: (target) => {
+        targets.push(target);
+        return { accepted: true };
+      },
+      answerCallbackQuery: async (id) => {
+        answers.push(id);
+      },
+      editInteractiveMessage: async (_chatId, _messageId, text) => {
+        edits.push(text);
+      },
+    },
+  );
+  assert.equal(handled, true);
+  assert.deepEqual(targets, [{ chatId: -100123 }]);
+  assert.deepEqual(answers, ["callback-1"]);
+  assert.deepEqual(edits, ["🆕 Starting a new shared session."]);
+});
+
+test("/new rejects every required busy guard before requesting replacement", async () => {
+  const guards: Array<[string, (state: Record<string, boolean>) => void, string]> = [
+    ["not idle", (state) => (state.idle = false), "Pi is busy"],
+    ["Pi pending", (state) => (state.pending = true), "pending messages"],
+    ["active turn", (state) => (state.active = true), "active Telegram turn"],
+    ["dispatch pending", (state) => (state.dispatch = true), "dispatch is pending"],
+    ["nonempty queue", (state) => (state.queue = true), "queue is non-empty"],
+    ["compaction", (state) => (state.compaction = true), "compaction is active"],
+    ["duplicate pending", (state) => (state.replacement = true), "replacement is already pending"],
+  ];
+  for (const [name, activate, expected] of guards) {
+    const state = {
+      idle: true,
+      pending: false,
+      active: false,
+      dispatch: false,
+      queue: false,
+      compaction: false,
+      replacement: false,
+    };
+    activate(state);
+    let requests = 0;
+    const replies: string[] = [];
+    await handleTelegramNewSessionCommand(
+      { chat: { id: 1 }, message_id: 1, message_thread_id: 2 },
+      {
+        isIdle: () => state.idle,
+        hasPendingMessages: () => state.pending,
+        hasActiveTelegramTurn: () => state.active,
+        hasDispatchPending: () => state.dispatch,
+        hasQueuedTelegramItems: () => state.queue,
+        isCompactionInProgress: () => state.compaction,
+        hasPendingSessionReplacement: () => state.replacement,
+        requestNewSession: () => {
+          requests += 1;
+          return { accepted: true };
+        },
+        getMessageTarget: getTelegramNewSessionMessageTarget,
+        sendTextReply: async (text) => {
+          replies.push(text);
+        },
+      },
+    );
+    assert.equal(requests, 0, `${name} must block replacement`);
+    assert.equal(replies.length, 1);
+    assert.match(replies[0]!, new RegExp(expected));
+  }
+});
+
+test("/new returns host-unavailable response when the request is refused", async () => {
+  const replies: string[] = [];
+  await handleTelegramNewSessionCommand(
+    { chat: { id: 1 }, message_id: 1 },
+    {
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      hasActiveTelegramTurn: () => false,
+      hasDispatchPending: () => false,
+      hasQueuedTelegramItems: () => false,
+      isCompactionInProgress: () => false,
+      hasPendingSessionReplacement: () => false,
+      requestNewSession: () => ({
+        accepted: false,
+        reason: "New session is unavailable from this Pi host.",
+      }),
+      getMessageTarget: getTelegramNewSessionMessageTarget,
+      sendTextReply: async (text) => {
+        replies.push(text);
+      },
+    },
+  );
+  assert.deepEqual(replies, ["New session is unavailable from this Pi host."]);
+});
+
 test("Command helpers register Telegram bot commands through deps", async () => {
   const calls: unknown[] = [];
   await registerTelegramBotCommands({
@@ -129,11 +328,25 @@ test("Command helpers register Telegram bot commands through deps", async () => 
   assert.deepEqual(calls, [TELEGRAM_BOT_COMMANDS, TELEGRAM_BOT_COMMANDS]);
 });
 
+test("Command helpers scope the household command menu to the allowlisted chat", async () => {
+  const calls: unknown[] = [];
+  const scope = { type: "chat" as const, chat_id: -100123 };
+
+  await registerTelegramBotCommands({
+    getScope: () => scope,
+    setMyCommands: async (commands, selectedScope) => {
+      calls.push({ commands, scope: selectedScope });
+    },
+  });
+
+  assert.deepEqual(calls, [{ commands: TELEGRAM_BOT_COMMANDS, scope }]);
+});
+
 test("Command helpers keep extension Telegram bot commands hidden by default", async () => {
   clearTelegramExtensionCommands();
   const dispose = registerTelegramCommand({
-    name: "new",
-    description: "Start fresh",
+    name: "review",
+    description: "Review work",
     handler: async () => {},
   });
   const calls: unknown[] = [];
@@ -150,10 +363,10 @@ test("Command helpers keep extension Telegram bot commands hidden by default", a
 test("Command helpers register extension Telegram bot commands when visible", async () => {
   clearTelegramExtensionCommands();
   const dispose = registerTelegramCommand({
-    name: "new",
-    description: "Start fresh",
+    name: "review",
+    description: "Review work",
     showInMenu: true,
-    emoji: "🆕",
+    emoji: "🧩",
     handler: async () => {},
   });
   const calls: unknown[] = [];
@@ -166,7 +379,7 @@ test("Command helpers register extension Telegram bot commands when visible", as
     [
       TELEGRAM_BOT_COMMANDS[0],
       TELEGRAM_BOT_COMMANDS[1],
-      { command: "new", description: "🆕 Start fresh" },
+      { command: "review", description: "🧩 Review work" },
       ...TELEGRAM_BOT_COMMANDS.slice(2),
     ],
   ]);
@@ -179,7 +392,7 @@ test("Command helpers reject visible extension commands without emoji", () => {
   assert.throws(
     () =>
       registerTelegramCommand({
-        name: "new",
+        name: "review",
         showInMenu: true,
         handler: () => {},
       }),
@@ -204,16 +417,16 @@ test("Command helpers reject invalid and built-in extension command names", () =
 test("Command helpers register disposable extension commands", () => {
   clearTelegramExtensionCommands();
   const dispose = registerTelegramCommand({
-    name: "/new",
+    name: "/review",
     handler: () => {},
   });
-  assert.equal(findTelegramExtensionCommand("new")?.name, "new");
+  assert.equal(findTelegramExtensionCommand("review")?.name, "review");
   assert.throws(
-    () => registerTelegramCommand({ name: "new", handler: () => {} }),
+    () => registerTelegramCommand({ name: "review", handler: () => {} }),
     /already registered/,
   );
   dispose();
-  assert.equal(findTelegramExtensionCommand("new"), undefined);
+  assert.equal(findTelegramExtensionCommand("review"), undefined);
   clearTelegramExtensionCommands();
 });
 
@@ -1079,15 +1292,15 @@ test("Command helpers build the unified app menu from commands and status", () =
     `${TELEGRAM_APP_MENU_INTRO_HTML}\n\n🧩 /review\n\n<b>Status:</b> <code>idle</code>`,
   );
   const dispose = registerTelegramCommand({
-    name: "new",
-    description: "Start fresh",
+    name: "review",
+    description: "Review work",
     showInMenu: true,
-    emoji: "🆕",
+    emoji: "🧩",
     handler: () => {},
   });
   const menuWithExtensionCommand = TELEGRAM_APP_MENU_INTRO_HTML.replace(
     "⏩ /next — Force next turn",
-    "🆕 /new — Start fresh\n⏩ /next — Force next turn",
+    "🧩 /review — Review work\n⏩ /next — Force next turn",
   );
   assert.equal(
     buildTelegramAppMenuHtml("<b>Status:</b> <code>idle</code>"),
@@ -1112,10 +1325,12 @@ test("Command helpers build the unified app menu from commands and status", () =
 
 test("Command handler target runtime binds command targets into command handling", async () => {
   const calls: string[] = [];
+  let requestedTarget: { chatId: number; threadId?: number } | undefined;
   const handleCommand = createTelegramCommandHandlerTargetRuntime<
     {
       chat: { id: number; type?: string };
       message_id: number;
+      message_thread_id?: number;
       from?: { id?: number };
     },
     string
@@ -1131,6 +1346,11 @@ test("Command handler target runtime binds command targets into command handling
     hasActiveTelegramTurn: () => false,
     hasDispatchPending: () => false,
     isCompactionInProgress: () => false,
+    requestNewSession: (target) => {
+      requestedTarget = target;
+      calls.push("request-new");
+      return { accepted: true };
+    },
     setCompactionInProgress: () => {},
     updateStatus: () => {},
     dispatchNextQueuedTelegramTurn: (ctx) => {
@@ -1177,7 +1397,21 @@ test("Command handler target runtime binds command targets into command handling
     ),
     true,
   );
-  assert.deepEqual(calls, ["show:ctx", "show:ctx"]);
+  assert.equal(
+    await handleCommand(
+      "new",
+      { chat: { id: 42 }, message_id: 13, message_thread_id: 123 },
+      "ctx",
+    ),
+    true,
+  );
+  assert.deepEqual(requestedTarget, { chatId: 42, threadId: 123 });
+  assert.deepEqual(calls, [
+    "show:ctx",
+    "show:ctx",
+    "request-new",
+    "reply:🆕 Starting a new session in this thread.",
+  ]);
 });
 
 test("Command runtime routes commands through runtime ports", async () => {
@@ -1424,6 +1658,54 @@ test("Command or prompt runtime routes commands before enqueue fallback", async 
   ]);
 });
 
+test("Pending session replacement blocks all forwarded work except duplicate /new", async () => {
+  const events: string[] = [];
+  let pending = true;
+  const runtime = createTelegramCommandOrPromptRuntime<
+    { text: string; chatId: number; threadId: number },
+    { id: string }
+  >({
+    extractRawText: (messages) => messages[0]?.text ?? "",
+    handleCommand: async (commandName) => {
+      events.push(`builtin:${commandName ?? "none"}`);
+      return commandName === "new";
+    },
+    hasPendingSessionReplacement: () => pending,
+    replyWhileSessionReplacementPending: async (message, ctx) => {
+      events.push(`reply:${message.text}:${message.chatId}:${message.threadId}:${ctx.id}`);
+    },
+    executeExtensionCommand: async () => {
+      events.push("extension");
+      return true;
+    },
+    expandPromptTemplateCommand: () => "expanded",
+    replaceMessageText: (message, text) => ({ ...message, text }),
+    enqueueTurn: async () => {
+      events.push("enqueue");
+    },
+  });
+
+  await runtime.dispatchMessages(
+    [{ text: "/new", chatId: 7, threadId: 42 }],
+    { id: "ctx" },
+  );
+  await runtime.dispatchMessages(
+    [{ text: "/review now", chatId: 7, threadId: 42 }],
+    { id: "ctx" },
+  );
+  await runtime.dispatchMessages(
+    [{ text: "ordinary prompt", chatId: 7, threadId: 42 }],
+    { id: "ctx" },
+  );
+  pending = false;
+
+  assert.deepEqual(events, [
+    "builtin:new",
+    "reply:/review now:7:42:ctx",
+    "reply:ordinary prompt:7:42:ctx",
+  ]);
+});
+
 test("Command or prompt runtime can ignore non-prompt message batches", async () => {
   const events: string[] = [];
   const runtime = createTelegramCommandOrPromptRuntime<
@@ -1483,6 +1765,9 @@ test("Command helpers execute command actions through provided handlers", async 
     handleQueue: async () => {
       events.push("queue");
     },
+    handleNew: async () => {
+      events.push("new");
+    },
   };
   assert.equal(
     await executeTelegramCommandAction(
@@ -1511,5 +1796,14 @@ test("Command helpers execute command actions through provided handlers", async 
     ),
     true,
   );
-  assert.deepEqual(events, ["stop", "help:start"]);
+  assert.equal(
+    await executeTelegramCommandAction(
+      { kind: "new", executionMode: "immediate" },
+      {},
+      {},
+      deps,
+    ),
+    true,
+  );
+  assert.deepEqual(events, ["stop", "help:start", "new"]);
 });

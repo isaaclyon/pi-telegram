@@ -857,7 +857,8 @@ export function createTelegramBusLeaderEnvelopeHandler(deps: {
           | "leader.forwardCallback"
           | "leader.forwardReaction"
           | "leader.forwardMessage"
-          | "leader.forwardEditedMessage";
+          | "leader.forwardEditedMessage"
+          | "leader.forwardedUpdatesPersisted";
       }
     >,
   ): Promise<TelegramBusEnvelope> => {
@@ -955,6 +956,7 @@ export function createTelegramBusLeaderEnvelopeHandler(deps: {
       case "leader.forwardReaction":
       case "leader.forwardMessage":
       case "leader.forwardEditedMessage":
+      case "leader.forwardedUpdatesPersisted":
         return forwardToFollower(envelope);
       case "follower.callApi":
         return handleFollowerApiCall(envelope, { ...deps, getNowMs });

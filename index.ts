@@ -15,6 +15,8 @@ import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
 import * as Threads from "./lib/threads.ts";
 import * as Inbound from "./lib/inbound.ts";
+import * as Inbox from "./lib/inbox.ts";
+import * as Host from "./lib/host.ts";
 import * as Lifecycle from "./lib/lifecycle.ts";
 import * as Locks from "./lib/locks.ts";
 import * as Media from "./lib/media.ts";
@@ -35,12 +37,14 @@ import * as Routing from "./lib/routing.ts";
 import * as Runtime from "./lib/runtime.ts";
 import * as Logs from "./lib/logs.ts";
 import * as Sections from "./lib/sections.ts";
+import * as SessionReplacement from "./lib/session-replacement.ts";
 import * as Status from "./lib/status.ts";
 import * as Sync from "./lib/sync.ts";
 import * as TelegramApi from "./lib/telegram-api.ts";
 import * as TextGroups from "./lib/text-groups.ts";
 import * as ThreadReconciler from "./lib/thread-reconciler.ts";
 import * as TimeInjection from "./lib/time-injection.ts";
+import * as ToolActivity from "./lib/tool-activity.ts";
 import * as Updates from "./lib/updates.ts";
 import * as Voice from "./lib/voice.ts";
 
@@ -132,11 +136,21 @@ export default function (pi: Pi.ExtensionAPI) {
     if (latestEvent) runtimeJsonlLog.record(latestEvent);
     scheduleRuntimeDiagnosticsSnapshotPersist();
   };
+  const recordPollingObservation = function (
+    details: Record<string, unknown>,
+  ) {
+    runtimeJsonlLog.record({
+      at: Date.now(),
+      category: "polling",
+      message: "getUpdates completed",
+      details,
+    });
+  };
   const configStore = Config.createTelegramConfigStore({ recordRuntimeEvent });
   configStoreForRedaction = configStore;
   getRuntimeLogProfileName = configStore.getActiveProfileName;
   const isTelegramBusConfigured = function (): boolean {
-    return true;
+    return Host.isTelegramHostPrivateChatThreadedModeAllowed();
   };
   const isTelegramBusRuntimeEnabled = function (): boolean {
     return isTelegramBusConfigured() && !telegramTopicModeUnavailable;
@@ -221,8 +235,11 @@ export default function (pi: Pi.ExtensionAPI) {
     TelegramApi.TelegramMessage,
     Pi.ExtensionContext
   >();
-  const telegramQueueStore =
-    Queue.createTelegramQueueStore<Pi.ExtensionContext>();
+  // ADR-0003 (host): reconcile a host-provided durable inbox on every queue
+  // mutation so accepted turns survive a crash. No-op until a host registers one.
+  const telegramQueueStore = Inbox.withTelegramInboundInboxPersistence(
+    Queue.createTelegramQueueStore<Pi.ExtensionContext>(),
+  );
   const deferredQueueDispatchRuntime =
     Queue.createTelegramDeferredQueueDispatchRuntime<Pi.ExtensionContext>({
       delayMs: 50,
@@ -309,6 +326,7 @@ export default function (pi: Pi.ExtensionAPI) {
     Queue.TelegramQueueItem<Pi.ExtensionContext>
   >({
     getConfig: configStore.get,
+    getAuthorizationSurface: Host.getTelegramHostHouseholdStatus,
     getActiveProfileName: configStore.getActiveProfileName,
     getDiagnosticPaths: Paths.getTelegramDiagnosticsDisplayPaths,
     isPollingActive: Polling.createTelegramPollingActivityReader(
@@ -484,7 +502,6 @@ export default function (pi: Pi.ExtensionAPI) {
     deleteMessage: deleteTelegramMessage,
     prepareTempDir,
   } = telegramApiRuntime;
-
   // --- Message Delivery ---
 
   const sendGuestReply = Replies.createGuestMarkdownReplySender({
@@ -531,6 +548,14 @@ export default function (pi: Pi.ExtensionAPI) {
   });
   const { replyTransport, editInteractiveMessage, sendInteractiveMessage } =
     replyRuntime;
+  Sections.bindTelegramSectionRuntimePresenter({
+    registry: sectionRegistry,
+    getTarget: activeTurnRuntime.getTarget,
+    answerCallbackQuery,
+    editInteractiveMessage,
+    sendInteractiveMessage,
+    deleteMessage: deleteTelegramMessage,
+  });
   const { sendTextReply, sendMarkdownReply } =
     Outbound.createTelegramOutboundTextReplyRuntime({
       sendTextReply: replyRuntime.sendTextReply,
@@ -538,6 +563,39 @@ export default function (pi: Pi.ExtensionAPI) {
       execCommand: CommandTemplates.execCommandTemplate,
       getHandlers: configStore.getOutboundHandlers,
       recordRuntimeEvent,
+    });
+  const newSessionReadiness =
+    Commands.createTelegramNewSessionReadinessCheck({
+      getContext() {
+        return telegramSessionContextStore.get();
+      },
+      isIdle,
+      hasPendingMessages,
+      hasActiveTelegramTurn: activeTurnRuntime.has,
+      hasDispatchPending: bridgeRuntime.lifecycle.hasDispatchPending,
+      hasQueuedTelegramItems: telegramQueueStore.hasQueuedItems,
+      isCompactionInProgress: bridgeRuntime.lifecycle.isCompactionInProgress,
+    });
+  const sessionReplacementRuntime =
+    SessionReplacement.createTelegramSessionReplacementRuntime({
+      getActiveProfileName: configStore.getActiveProfileName,
+      activateProfile: configStore.activateProfile,
+      async sendTargetText(target, text) {
+        await sendTextReply(target.chatId, undefined, text, { target });
+      },
+      getBlockingReason: newSessionReadiness,
+      recordRuntimeEvent,
+    });
+  const hostSessionReplacementReadiness =
+    Commands.createTelegramHostSessionReplacementReadinessCheck({
+      getContext: telegramSessionContextStore.get,
+      isIdle,
+      hasPendingMessages,
+      hasActiveTelegramTurn: activeTurnRuntime.has,
+      hasDispatchPending: lifecycle.hasDispatchPending,
+      hasQueuedTelegramItems: telegramQueueStore.hasQueuedItems,
+      isCompactionInProgress: lifecycle.isCompactionInProgress,
+      hasPendingSessionReplacement: sessionReplacementRuntime.isPending,
     });
   const dispatchNextQueuedTelegramTurn =
     Queue.createTelegramQueueDispatchRuntime({
@@ -553,6 +611,7 @@ export default function (pi: Pi.ExtensionAPI) {
       recordRuntimeEvent,
       ...promptDispatchRuntime,
       sendUserMessage,
+      preparePrompt: Host.prepareTelegramHostPrompt,
     }).dispatchNext;
   const queueDispatchWatchdogRuntime =
     Queue.createTelegramQueueDispatchWatchdogRuntime({
@@ -585,6 +644,18 @@ export default function (pi: Pi.ExtensionAPI) {
       getHandlers: configStore.getOutboundHandlers,
       recordRuntimeEvent,
     });
+  const toolActivityRuntime = ToolActivity.createTelegramToolActivityRuntime({
+    isEnabled: configControls.isToolActivityEnabled,
+    getActiveTurn: activeTurnRuntime.get,
+    sendMessage,
+    editMessageText: editTelegramMessageText,
+    deleteMessage: deleteTelegramMessage,
+    getCwd() {
+      const ctx = telegramSessionContextStore.get();
+      return ctx ? Pi.getExtensionContextCwd(ctx) : undefined;
+    },
+    recordRuntimeEvent,
+  });
 
   // --- Model And Menu Setup ---
 
@@ -691,6 +762,7 @@ export default function (pi: Pi.ExtensionAPI) {
         return telegramBusAuthSecret;
       },
       timeoutMs: 30_000,
+      recordRuntimeEvent,
     });
   const followerTargetController =
     Bus.createTelegramBusFollowerTargetController({
@@ -822,6 +894,7 @@ export default function (pi: Pi.ExtensionAPI) {
     answerGuestQuery,
     sendTextReply,
     setMyCommands,
+    getBotCommandScope: Host.getTelegramHostHouseholdCommandScope,
     getCommands,
     downloadFile: downloadTelegramBridgeFile,
     resolveTimeLine: timeInjectionRuntime.resolveLine,
@@ -835,6 +908,8 @@ export default function (pi: Pi.ExtensionAPI) {
     sendUserMessage,
     isIdle,
     hasPendingMessages,
+    hasPendingSessionReplacement: sessionReplacementRuntime.isPending,
+    requestNewSession: sessionReplacementRuntime.request,
     compact,
     recordRuntimeEvent,
   });
@@ -885,6 +960,8 @@ export default function (pi: Pi.ExtensionAPI) {
             ctx,
           );
         },
+        afterForwardedUpdatesPersisted:
+          sessionReplacementRuntime.flushAfterUpdatePersisted,
         recordRuntimeEvent,
       },
       targetReplacement: {
@@ -957,9 +1034,23 @@ export default function (pi: Pi.ExtensionAPI) {
     handleUpdate: Updates.createTelegramUpdateHandle({
       defaultHandle: inboundRouteRuntime.handleUpdate,
     }),
+    async afterUpdatePersisted() {
+      try {
+        if (!(await foreignOwnedUpdateForwarder.confirmForwardedUpdatesPersisted())) {
+          return false;
+        }
+      } catch (error) {
+        recordRuntimeEvent("bus", error, {
+          phase: "leader-forwarded-updates-persisted",
+        });
+        return false;
+      }
+      return sessionReplacementRuntime.flushAfterUpdatePersisted();
+    },
     stopTypingLoop: typing.stop,
     updateStatus,
     recordRuntimeEvent,
+    recordPollingObservation,
   });
   const recoverStaleTelegramTopicApiError = function (
     apiBody: unknown,
@@ -1177,6 +1268,12 @@ export default function (pi: Pi.ExtensionAPI) {
     registerFollowerWithOwner: threadAwarePollingPorts.registerFollowerWithOwner,
     stopFollowerRegistration: threadAwarePollingPorts.stopFollowerRegistration,
     updateStatus,
+    // Publish the command menu once this instance owns the bot, so `/`
+    // autocomplete (including /new) appears without a manual /help.
+    onPollingStarted: Commands.createTelegramBotCommandRegistrar({
+      setMyCommands,
+      getScope: Host.getTelegramHostHouseholdCommandScope,
+    }),
     recordRuntimeEvent,
   });
   const disconnectTelegramAndDeleteCurrentThread =
@@ -1234,15 +1331,29 @@ export default function (pi: Pi.ExtensionAPI) {
     stopPolling: suspendTelegramForSessionReplacement,
     recordRuntimeEvent,
   });
+  let unregisterHostSessionReplacementGuard:
+    | ReturnType<typeof Host.registerTelegramHostSessionReplacementGuard>
+    | undefined;
   const baseSessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
     queueSessionLifecycle,
     {
       async onSessionStart(event, ctx) {
+        unregisterHostSessionReplacementGuard =
+          Host.registerTelegramHostSessionReplacementGuard(
+            hostSessionReplacementReadiness,
+          );
         await lockedPollingRuntime.onSessionStart(event, ctx);
+        const replayed = Inbox.replayTelegramInboundInbox(
+          telegramQueueStore,
+          Inbox.getTelegramInboundInbox(),
+        );
+        if (replayed > 0) queueMutationRuntime.reorder(ctx);
         telegramThreadCapabilityMonitor.start(ctx);
         queueDispatchWatchdogRuntime.start(ctx);
       },
       async onSessionShutdown() {
+        unregisterHostSessionReplacementGuard?.();
+        unregisterHostSessionReplacementGuard = undefined;
         queueDispatchWatchdogRuntime.stop();
         telegramThreadCapabilityMonitor.stop();
       },
@@ -1252,16 +1363,23 @@ export default function (pi: Pi.ExtensionAPI) {
     baseSessionLifecycleRuntime,
     Lifecycle.createTelegramSessionContextTracker(telegramSessionContextStore),
   );
+  const refreshTelegramFollowerSession =
+    BusFollower.createTelegramBusFollowerSessionRefreshHook({
+      registrationState: telegramBusFollowerRegistrationState,
+      registrationRuntime: telegramBusFollowerRegistration,
+      getLeaderState() {
+        return lockRuntime.getState();
+      },
+      updateStatus,
+      recordRuntimeEvent,
+    });
   const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
     sessionLifecycleWithContext,
     {
-      onSessionStart: BusFollower.createTelegramBusFollowerSessionRefreshHook({
-        registrationState: telegramBusFollowerRegistrationState,
-        registrationRuntime: telegramBusFollowerRegistration,
-        getLeaderState() {
-          return lockRuntime.getState();
-        },
-        updateStatus,
+      onSessionStart: SessionReplacement.createTelegramSessionStartHook({
+        restoreSessionProfile: sessionReplacementRuntime.restoreProfile,
+        refreshFollowerSession: refreshTelegramFollowerSession,
+        onSessionStart: sessionReplacementRuntime.onSessionStart,
         recordRuntimeEvent,
       }),
     },
@@ -1309,6 +1427,7 @@ export default function (pi: Pi.ExtensionAPI) {
     telegramQueueStore,
     modelSwitchController,
     previewRuntime,
+    toolActivityRuntime,
     promptDispatchRuntime,
     deferredQueueDispatchRuntime,
     lockOwnershipGuard,

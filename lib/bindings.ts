@@ -22,6 +22,7 @@ import * as Runtime from "./runtime.ts";
 import * as Setup from "./setup.ts";
 import * as Status from "./status.ts";
 import * as TelegramApi from "./telegram-api.ts";
+import * as ToolActivity from "./tool-activity.ts";
 
 type ActivePiModel = NonNullable<Pi.ExtensionContext["model"]>;
 
@@ -221,6 +222,7 @@ interface TelegramLifecycleBindingDeps {
     Pi.AgentEndEvent["messages"][number],
     Keyboard.TelegramInlineKeyboardMarkup
   >;
+  toolActivityRuntime: ToolActivity.TelegramToolActivityRuntime;
   promptDispatchRuntime: Runtime.TelegramPromptDispatchRuntime<Pi.ExtensionContext>;
   deferredQueueDispatchRuntime: Queue.TelegramDeferredQueueDispatchRuntime<Pi.ExtensionContext>;
   lockOwnershipGuard: Pick<
@@ -285,6 +287,7 @@ export function registerTelegramLifecycleRuntimeHooks({
   telegramQueueStore,
   modelSwitchController,
   previewRuntime,
+  toolActivityRuntime,
   promptDispatchRuntime,
   deferredQueueDispatchRuntime,
   lockOwnershipGuard,
@@ -531,23 +534,32 @@ export function registerTelegramLifecycleRuntimeHooks({
     ...sessionLifecycleRuntime,
     ...agentLifecycleHooks,
     async onSessionShutdown(event, ctx) {
+      toolActivityRuntime.discard();
       compactionObserver.onSessionShutdown();
       await sessionLifecycleRuntime.onSessionShutdown(event, ctx);
     },
     onSessionBeforeCompact: compactionObserver.onSessionBeforeCompact,
     onSessionCompact: compactionObserver.onSessionCompact,
     async onAgentStart(event, ctx) {
+      toolActivityRuntime.onAgentStart();
       await agentStartWithDedupReset(event, ctx);
       startAgentActivityTypingLoop(ctx);
     },
-    async onToolExecutionStart(_event, _ctx) {
+    async onToolExecutionStart(event, ctx) {
       agentLifecycleHooks.onToolExecutionStart();
+      if (canSendAgentActivity(ctx)) {
+        toolActivityRuntime.onToolExecutionStart(event);
+      }
     },
     onToolExecutionUpdate() {},
-    async onToolExecutionEnd(_event, ctx) {
-      agentLifecycleHooks.onToolExecutionEnd(_event, ctx);
+    async onToolExecutionEnd(event, ctx) {
+      agentLifecycleHooks.onToolExecutionEnd(event, ctx);
+      toolActivityRuntime.onToolExecutionEnd(event);
     },
-    onAgentEnd: agentLifecycleHooks.onAgentEnd,
+    async onAgentEnd(event, ctx) {
+      await toolActivityRuntime.finish();
+      await agentLifecycleHooks.onAgentEnd(event, ctx);
+    },
     onBeforeAgentStart: Prompts.createTelegramProactiveBeforeAgentStartHook({
       isConfigured: configStore.hasBotToken,
       isProactivePushEnabled,

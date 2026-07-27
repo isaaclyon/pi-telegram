@@ -367,6 +367,22 @@ test("Bus contract encodes and parses forwarded update envelopes", () => {
       sentAtMs: 5000,
     },
   );
+  assert.deepEqual(
+    parseTelegramBusEnvelope(
+      encodeTelegramBusEnvelope({
+        kind: "leader.forwardedUpdatesPersisted",
+        requestId: "leader:6",
+        recipientInstanceId: "inst-b",
+        sentAtMs: 6000,
+      }).trimEnd(),
+    ),
+    {
+      kind: "leader.forwardedUpdatesPersisted",
+      requestId: "leader:6",
+      recipientInstanceId: "inst-b",
+      sentAtMs: 6000,
+    },
+  );
 });
 
 test("Bus contract rejects malformed envelopes", () => {
@@ -982,6 +998,7 @@ test("Bus foreign-owned update forwarder sends routed update envelopes", async (
       }),
       true,
     );
+    assert.equal(await forwarder.confirmForwardedUpdatesPersisted(), true);
     assert.deepEqual(received, [
       {
         kind: "leader.forwardCallback",
@@ -1009,6 +1026,12 @@ test("Bus foreign-owned update forwarder sends routed update envelopes", async (
         requestId: "leader:4",
         recipientInstanceId: "inst-b",
         message: { message_id: 9 },
+        sentAtMs: 9000,
+      },
+      {
+        kind: "leader.forwardedUpdatesPersisted",
+        requestId: "leader:5",
+        recipientInstanceId: "inst-b",
         sentAtMs: 9000,
       },
     ]);
@@ -1043,6 +1066,47 @@ test("Bus foreign-owned update forwarder supports tolerant timeouts", async () =
       }),
       true,
     );
+  } finally {
+    await server.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Bus foreign-owned update forwarder never confirms failed forwards", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-bus-forwarder-failed-"));
+  const socketPath = join(dir, "bus.sock");
+  const received: string[] = [];
+  const events: unknown[] = [];
+  const server = createTelegramBusLocalServer({
+    socketPath,
+    handleEnvelope: (envelope) => {
+      received.push(envelope.kind);
+      return {
+        kind: "bus.ack",
+        requestId: envelope.requestId,
+        ok: false,
+        message: "follower unavailable",
+      };
+    },
+  });
+  const forwarder = createTelegramBusForeignOwnedUpdateForwarder({
+    socketPath,
+    createRequestId: () => `leader:${received.length + 1}`,
+    recordRuntimeEvent: (...args) => events.push(args),
+  });
+  try {
+    await server.start();
+    assert.equal(
+      await forwarder.forwardMessage({
+        message: { message_id: 8 },
+        ownership: { instanceId: "inst-b" },
+        ctx: "ctx",
+      }),
+      false,
+    );
+    assert.equal(await forwarder.confirmForwardedUpdatesPersisted(), true);
+    assert.deepEqual(received, ["leader.forwardMessage"]);
+    assert.deepEqual(events, []);
   } finally {
     await server.stop();
     rmSync(dir, { recursive: true, force: true });
