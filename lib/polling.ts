@@ -20,6 +20,10 @@ const TELEGRAM_INITIAL_SYNC_LIMIT = 1;
 const TELEGRAM_INITIAL_SYNC_TIMEOUT_SECONDS = 0;
 const TELEGRAM_LONG_POLL_LIMIT = 10;
 const TELEGRAM_LONG_POLL_TIMEOUT_SECONDS = 30;
+const TELEGRAM_LONG_POLL_WATCHDOG_GRACE_MS = 15_000;
+const TELEGRAM_LONG_POLL_WATCHDOG_TIMEOUT_MS =
+  TELEGRAM_LONG_POLL_TIMEOUT_SECONDS * 1_000 +
+  TELEGRAM_LONG_POLL_WATCHDOG_GRACE_MS;
 const TELEGRAM_THREAD_CAPABILITY_MONITOR_INTERVAL_MS = 2_500;
 const TELEGRAM_THREAD_CAPABILITY_DISABLED_CONFIRMATION_PROBES = 2;
 const TELEGRAM_POLLING_DEFAULT_MAX_UPDATE_FAILURES = 3;
@@ -778,6 +782,9 @@ export interface TelegramPollLoopDeps<
   onStatusReset: () => void;
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   maxUpdateFailures?: number;
+  nowMs?: () => number;
+  pollWatchdogTimeoutMs?: number;
+  recordPollingObservation?: (details: Record<string, unknown>) => void;
 }
 
 export interface TelegramPollLoopRunnerDeps<
@@ -796,6 +803,9 @@ export interface TelegramPollLoopRunnerDeps<
   updateStatus: (ctx: TContext, message?: string) => void;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   maxUpdateFailures?: number;
+  nowMs?: () => number;
+  pollWatchdogTimeoutMs?: number;
+  recordPollingObservation?: (details: Record<string, unknown>) => void;
 }
 
 export function sleepTelegramPollingRetry(
@@ -853,8 +863,62 @@ export function createTelegramPollLoopRunner<
       },
       sleep,
       maxUpdateFailures: deps.maxUpdateFailures,
+      nowMs: deps.nowMs,
+      pollWatchdogTimeoutMs: deps.pollWatchdogTimeoutMs,
+      recordPollingObservation: deps.recordPollingObservation,
       recordRuntimeEvent: deps.recordRuntimeEvent,
     });
+}
+
+async function getTelegramUpdatesWithWatchdog<
+  TUpdate extends TelegramUpdate,
+  TContext,
+>(
+  deps: TelegramPollLoopDeps<TUpdate, TContext>,
+  body: Record<string, unknown>,
+): Promise<TUpdate[]> {
+  const now = deps.nowMs ?? Date.now;
+  const startedAt = now();
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  deps.signal.addEventListener("abort", onParentAbort, { once: true });
+  if (deps.signal.aborted) controller.abort();
+  let watchdogTriggered = false;
+  const watchdog = setTimeout(() => {
+    watchdogTriggered = true;
+    controller.abort();
+  }, deps.pollWatchdogTimeoutMs ?? TELEGRAM_LONG_POLL_WATCHDOG_TIMEOUT_MS);
+  watchdog.unref?.();
+  try {
+    const updates = await deps.getUpdates(body, controller.signal);
+    const durationMs = Math.max(0, now() - startedAt);
+    if (durationMs >= 10_000 || updates.length > 0) {
+      deps.recordPollingObservation?.({
+        phase: "getUpdates-complete",
+        durationMs,
+        updateCount: updates.length,
+        ...(updates.length > 0
+          ? { lastUpdateId: updates.at(-1)?.update_id }
+          : {}),
+      });
+    }
+    return updates;
+  } catch (error) {
+    if (watchdogTriggered && !deps.signal.aborted) {
+      const watchdogError = new Error("Telegram getUpdates watchdog timeout");
+      deps.recordRuntimeEvent?.("polling", watchdogError, {
+        phase: "getUpdates-watchdog",
+        durationMs: Math.max(0, now() - startedAt),
+        timeoutMs:
+          deps.pollWatchdogTimeoutMs ?? TELEGRAM_LONG_POLL_WATCHDOG_TIMEOUT_MS,
+      });
+      throw watchdogError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(watchdog);
+    deps.signal.removeEventListener("abort", onParentAbort);
+  }
 }
 
 function getTelegramPollingErrorMessage(error: unknown): string {
@@ -901,9 +965,8 @@ export async function runTelegramPollLoop<
   let consecutiveGetUpdatesConflicts = 0;
   while (!deps.signal.aborted) {
     try {
-      const updates = await deps.getUpdates(
+      const updates = await getTelegramUpdatesWithWatchdog(deps,
         buildTelegramLongPollRequest(deps.config.lastUpdateId),
-        deps.signal,
       );
       consecutiveGetUpdatesConflicts = 0;
       for (const update of updates) {

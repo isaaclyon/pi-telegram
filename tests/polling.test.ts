@@ -679,6 +679,85 @@ test("Poll loop initializes lastUpdateId and processes updates", async () => {
   assert.equal(persistCount, 3);
 });
 
+test("Poll loop records slow getUpdates observations without message content", async () => {
+  const config = { botToken: "123:abc", lastUpdateId: 5 };
+  const observations: Array<Record<string, unknown>> = [];
+  let now = 1_000;
+  let calls = 0;
+  await runTelegramPollLoop({
+    ctx: TEST_CONTEXT,
+    signal: new AbortController().signal,
+    config,
+    deleteWebhook: async () => {},
+    getUpdates: async () => {
+      calls += 1;
+      if (calls === 1) {
+        now = 13_500;
+        return [{ update_id: 6 }];
+      }
+      throw new DOMException("stop", "AbortError");
+    },
+    persistConfig: async () => {},
+    handleUpdate: async () => {},
+    onErrorStatus: () => {},
+    onStatusReset: () => {},
+    sleep: async () => {},
+    nowMs: () => now,
+    recordPollingObservation: (details) => observations.push(details),
+  });
+  assert.deepEqual(observations, [
+    {
+      phase: "getUpdates-complete",
+      durationMs: 12_500,
+      updateCount: 1,
+      lastUpdateId: 6,
+    },
+  ]);
+});
+
+test("Poll loop retries after a stuck getUpdates watchdog timeout", async () => {
+  const config = { botToken: "123:abc", lastUpdateId: 5 };
+  const controller = new AbortController();
+  const runtimeEvents: string[] = [];
+  const statusMessages: string[] = [];
+  let calls = 0;
+  await runTelegramPollLoop({
+    ctx: TEST_CONTEXT,
+    signal: controller.signal,
+    config,
+    deleteWebhook: async () => {},
+    getUpdates: async (_body, signal) => {
+      calls += 1;
+      await new Promise<void>((resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return [];
+    },
+    persistConfig: async () => {},
+    handleUpdate: async () => {},
+    onErrorStatus: (message) => statusMessages.push(message),
+    onStatusReset: () => {},
+    sleep: async () => {
+      controller.abort();
+    },
+    pollWatchdogTimeoutMs: 1,
+    recordRuntimeEvent: (category, error, details) => {
+      runtimeEvents.push(
+        `${category}:${error instanceof Error ? error.message : String(error)}:${details?.phase}`,
+      );
+    },
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(statusMessages, ["Telegram getUpdates watchdog timeout"]);
+  assert.deepEqual(runtimeEvents, [
+    "polling:Telegram getUpdates watchdog timeout:getUpdates-watchdog",
+    "polling:Telegram getUpdates watchdog timeout:loop",
+  ]);
+});
+
 test("Poll loop flushes deferred work only after offset persistence", async () => {
   const config = { botToken: "123:abc", lastUpdateId: 5 };
   const events: string[] = [];

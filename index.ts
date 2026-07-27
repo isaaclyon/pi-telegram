@@ -136,6 +136,16 @@ export default function (pi: Pi.ExtensionAPI) {
     if (latestEvent) runtimeJsonlLog.record(latestEvent);
     scheduleRuntimeDiagnosticsSnapshotPersist();
   };
+  const recordPollingObservation = function (
+    details: Record<string, unknown>,
+  ) {
+    runtimeJsonlLog.record({
+      at: Date.now(),
+      category: "polling",
+      message: "getUpdates completed",
+      details,
+    });
+  };
   const configStore = Config.createTelegramConfigStore({ recordRuntimeEvent });
   configStoreForRedaction = configStore;
   getRuntimeLogProfileName = configStore.getActiveProfileName;
@@ -1040,6 +1050,7 @@ export default function (pi: Pi.ExtensionAPI) {
     stopTypingLoop: typing.stop,
     updateStatus,
     recordRuntimeEvent,
+    recordPollingObservation,
   });
   const recoverStaleTelegramTopicApiError = function (
     apiBody: unknown,
