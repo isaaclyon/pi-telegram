@@ -12,6 +12,7 @@ export type TelegramHostNewSession = () => Promise<TelegramHostNewSessionResult>
 
 export interface TelegramHostPromptPreparationInput {
   trigger: "telegram";
+  prompt?: { text: string; sentAtMs?: number };
 }
 
 export interface TelegramHostPromptPreparationResult {
@@ -205,12 +206,21 @@ export function isTelegramHostPromptPreparationInFlight(): boolean {
   return promptPreparationsInFlight > 0;
 }
 
-export async function prepareTelegramHostPrompt(): Promise<TelegramHostPromptPreparationResult> {
+export async function prepareTelegramHostPrompt(
+  turn?: { historyText: string; sentAtMs?: number },
+): Promise<TelegramHostPromptPreparationResult> {
   const prepare = getTelegramHostPromptPreparation();
   if (!prepare) return { sessionReplaced: false };
   promptPreparationsInFlight += 1;
   try {
-    return await prepare({ trigger: "telegram" });
+    return await prepare({
+      trigger: "telegram",
+      ...(turn ? { prompt: {
+        text: turn.historyText.slice(0, 16_384),
+        ...(Number.isSafeInteger(turn.sentAtMs) && turn.sentAtMs! > 0
+          ? { sentAtMs: turn.sentAtMs } : {}),
+      } } : {}),
+    });
   } finally {
     promptPreparationsInFlight -= 1;
   }

@@ -193,7 +193,7 @@ Dispatch requires:
 
 A dispatched prompt remains queued until `agent_start` consumes it. This keeps the active Telegram turn bound for previews, attachments, aborts, and final replies.
 
-If the trusted host registers prompt preparation, dispatch awaits it before calling `sendUserMessage`. The complete prompt remains in the queue and durable inbox during that wait. Preparation rejection leaves it available for watchdog retry; a reported session replacement stops the old dispatcher and lets the fresh runtime replay the durable turn. Shutdown-time queue clearing does not reconcile that one in-flight preparation away. This is the narrow asynchronous seam used by hosts that need a lifecycle decision without exposing Pi internals or prompt content to the capability.
+If the trusted host registers prompt preparation, dispatch awaits it before calling `sendUserMessage`. The complete prompt remains in the queue and durable inbox during that wait. Preparation rejection leaves it available for watchdog retry; a reported session replacement stops the old dispatcher and lets the fresh runtime replay the durable turn. Shutdown-time queue clearing does not reconcile that one in-flight preparation away. The capability receives bounded history text and the original Telegram message time for conversation-boundary decisions, without Pi internals or binary attachments.
 
 Durable inbox replay runs on every session start and is idempotent by the stable
 chat/source-message turn key. This lets same-process replacement recover the

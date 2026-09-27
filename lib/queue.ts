@@ -94,6 +94,8 @@ export interface PendingTelegramTurn extends TelegramQueueItemBase {
   queuedAttachments: QueuedAttachment[];
   content: TelegramPromptContent[];
   historyText: string;
+  /** Original Telegram message time, preserved through durable replay. */
+  sentAtMs?: number;
   priorityEmoji?: string;
 
   /** Turn should preferably be delivered as voice (mirror mode + user sent voice) */

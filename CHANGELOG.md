@@ -6,8 +6,10 @@
 
 ## Unreleased: Host Prompt Preparation
 
+- `[Host Interop]` Prompt preparation now supplies bounded history text and the original Telegram message timestamp for host-owned conversation routing. Message timestamps survive durable replay; full prompt delivery and replacement guards remain unchanged.
+
 - `[Polling Diagnostics]` Long-poll completion timing and update counts now enter the bounded profile runtime JSONL log without message content, and a 45-second `getUpdates` watchdog aborts and retries a stuck request. Impact: an apparently healthy but deaf Telegram poller becomes diagnosable and can recover from a transport request that never settles.
-- `[Host Interop]` Added an optional narrow host prompt-preparation capability that runs immediately before a queued Telegram prompt enters Pi and reports whether it replaced the session. The capability receives only the Telegram trigger kind and exposes no Pi runtime or prompt content.
+- `[Host Interop]` Added an optional narrow host prompt-preparation capability that runs immediately before a queued Telegram prompt enters Pi and reports whether it replaced the session. It exposes no Pi runtime.
 - `[Queue Reliability]` Prompt dispatch now remains queued and durable while asynchronous host preparation is pending, blocks duplicate dispatchers, retries preparation failures without losing the turn, and leaves a replacement-triggering turn for the fresh session to replay instead of handing it through a stale extension context.
 - `[Replacement Guard]` Each live extension session publishes its bounded replacement-readiness result to the host. Host-injected jobs can no longer replace across queued Telegram work, an active/pending turn, compaction, or Pi pending messages; Telegram preparation excludes only its own still-queued triggering turn.
 - `[Crash Replay]` Durable-inbox reconciliation preserves the triggering turn when the old extension shuts down during host preparation. Existing target, actor attribution, attachments, voice preference, queue lane/priority, grouping, and replay records remain unchanged.
