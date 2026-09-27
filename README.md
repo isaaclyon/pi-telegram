@@ -12,6 +12,11 @@ This repository is a host-integration fork of [`llblab/pi-telegram`](https://git
 
 ## Install
 
+Trusted hosts may classify conversation boundaries through the optional
+[prompt-preparation capability](docs/public-api.md#host-capabilities), which
+receives bounded incoming text and the original message timestamp while the
+complete turn remains durably queued.
+
 From npm:
 
 ```bash

@@ -18,9 +18,42 @@ import {
   getTelegramHostSessionReplacementGuard,
   isTelegramHostPrivateChatThreadedModeAllowed,
   registerTelegramHostSessionReplacementGuard,
+  prepareTelegramHostPrompt,
 } from "../lib/host.ts";
 
 const REGISTRY_KEY = Symbol.for("pi-telegram.host-capability-registry");
+
+test("prompt preparation forwards bounded text and original message time only", async () => {
+  clearHostRegistry();
+  const dispose = registerTelegramHostPromptPreparation(async (input) => {
+    assert.deepEqual(input, {
+      trigger: "telegram",
+      prompt: { text: "hello", sentAtMs: 123000 },
+    });
+    return { sessionReplaced: false };
+  });
+  try {
+    await prepareTelegramHostPrompt({ historyText: "hello", sentAtMs: 123000 });
+  } finally {
+    dispose();
+    clearHostRegistry();
+  }
+});
+
+test("prompt preparation bounds text and omits invalid timestamps", async () => {
+  clearHostRegistry();
+  const dispose = registerTelegramHostPromptPreparation(async (input) => {
+    assert.equal(input.prompt?.text.length, 16_384);
+    assert.equal(input.prompt?.sentAtMs, undefined);
+    return { sessionReplaced: false };
+  });
+  try {
+    await prepareTelegramHostPrompt({ historyText: "a".repeat(20_000), sentAtMs: NaN });
+  } finally {
+    dispose();
+    clearHostRegistry();
+  }
+});
 
 function clearHostRegistry(): void {
   delete (globalThis as Record<PropertyKey, unknown>)[REGISTRY_KEY];

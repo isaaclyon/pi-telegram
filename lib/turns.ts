@@ -51,6 +51,7 @@ export interface TelegramTurnTarget {
 
 export interface TelegramTurnMessage {
   message_id: number;
+  date?: number;
   message_thread_id?: number;
   chat: { id: number; type?: string };
 }
@@ -585,6 +586,8 @@ export async function buildTelegramPromptTurn(
     target: getTelegramTurnTarget(firstMessage),
     replyToMessageId: firstMessage.message_id,
     sourceMessageIds: collectTelegramMessageIds(options.messages),
+    ...(Number.isSafeInteger(firstMessage.date) && firstMessage.date! > 0
+      ? { sentAtMs: firstMessage.date! * 1_000 } : {}),
     queueOrder: options.queueOrder,
     queueLane: "default",
     laneOrder: options.queueOrder,

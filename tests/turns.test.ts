@@ -8,6 +8,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { serializeTelegramInboundTurn, deserializeTelegramInboundTurn } from "../lib/inbox.ts";
 
 import {
   buildTelegramPromptTurn,
@@ -21,6 +22,18 @@ import {
   updateQueuedTelegramPromptTurnText,
   updateTelegramPromptTurnText,
 } from "../lib/turns.ts";
+
+test("original message time survives turn assembly, edits, and durable replay", async () => {
+  const buildTurn = createTelegramPromptTurnRuntimeBuilder({
+    allocateQueueOrder: () => 1,
+    downloadFile: async () => "/unused",
+  });
+  const message = { message_id: 12, date: 1_800_000_000, chat: { id: 5 }, text: "hello" };
+  const turn = await buildTurn([message]);
+  assert.equal(turn.sentAtMs, message.date * 1_000);
+  const edited = updateTelegramPromptTurnText({ turn, telegramPrefix: "[telegram]", rawText: "edited" });
+  assert.equal(deserializeTelegramInboundTurn(serializeTelegramInboundTurn(edited))?.sentAtMs, turn.sentAtMs);
+});
 
 test("Turn helpers truncate queue summaries predictably", () => {
   assert.equal(
