@@ -12,6 +12,9 @@ This repository is a host-integration fork of [`llblab/pi-telegram`](https://git
 
 ## Install
 
+The thinking menu supports Pi 0.87's `max` level alongside the existing levels;
+Pi determines which levels the selected model supports.
+
 Trusted hosts may classify conversation boundaries through the optional
 [prompt-preparation capability](docs/public-api.md#host-capabilities), which
 receives bounded incoming text and the original message timestamp while the

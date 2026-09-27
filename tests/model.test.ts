@@ -133,6 +133,7 @@ test("Model helpers match models, detect thinking levels, and expose constants",
     "medium",
     "high",
     "xhigh",
+    "max",
   ]);
   assert.equal(
     modelsMatch(createModelTestModel(), createModelTestModel()),
@@ -147,6 +148,7 @@ test("Model helpers match models, detect thinking levels, and expose constants",
   );
   assert.equal(getCanonicalModelId(createModelTestModel()), "openai/gpt-5");
   assert.equal(isThinkingLevel("high"), true);
+  assert.equal(isThinkingLevel("max"), true);
   assert.equal(isThinkingLevel("impossible"), false);
 });
 

@@ -38,6 +38,9 @@ test("Thinking menu text and reply markup expose all levels with current marker"
     ),
     true,
   );
+  const maximum = buildThinkingMenuReplyMarkup("max");
+  assert.equal(maximum.inline_keyboard.some((row) =>
+    row[0]?.text === "🟢 max" && row[0]?.callback_data === "thinking:set:max"), true);
 });
 
 test("Thinking callback sets valid levels and reports current level", async () => {

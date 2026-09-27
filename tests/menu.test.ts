@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ThinkingLevel } from "../lib/model.ts";
 
 import { createTelegramQueueMenuRuntime } from "../lib/menu-queue.ts";
 import {
@@ -986,8 +987,7 @@ test("Menu runtime routes stored callback queries through callback action ports"
     allModels: [{ model, thinkingLevel: "high" }],
     mode: "status",
   };
-  let thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" =
-    "medium";
+  let thinkingLevel: ThinkingLevel = "medium";
   await handleTelegramMenuCallbackRuntime(
     { id: "callback-1", data: "menu:thinking", message: { message_id: 2 } },
     { idle: true },

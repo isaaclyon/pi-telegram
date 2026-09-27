@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased: Pi 0.87 Compatibility
+
+- Accept and display Pi's `max` thinking level in model selection and the thinking menu, preserving the active marker and callback round-trip.
+- Validate the fork against Pi 0.87.1's SDK types and regression suite.
+- Load the SDK once in integration-suite setup so cold imports do not consume individual dispatch-test deadlines.
+
 ## Unreleased: Direct Section Presentation
 
 - Let registered Telegram commands open companion sections directly, and let active-turn companion workflows present registered sections without an agent round trip.
