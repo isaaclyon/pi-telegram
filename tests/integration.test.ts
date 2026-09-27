@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import testRoot, { mock, type TestContext } from "node:test";
+import testRoot, { before, mock, type TestContext } from "node:test";
 
 import {
   registerTelegramHostHouseholdGroup,
@@ -48,6 +48,11 @@ async function getRuntimeTelegramExtension(): Promise<RuntimeTelegramExtension> 
   runtimeTelegramExtension = (await import("../index.ts")).default;
   return runtimeTelegramExtension;
 }
+
+// Cold SDK imports can exceed an individual runtime test's five-second budget
+// when the full suite starts concurrently. Keep import time separate from the
+// existing dispatch deadlines so cancellation cannot leave half-started hooks.
+before(async () => { await getRuntimeTelegramExtension(); }, { timeout: 30_000 });
 
 async function flushMicrotasks(iterations = 10): Promise<void> {
   for (let i = 0; i < iterations; i++) {

@@ -60,6 +60,9 @@ Stable commands inside the paired Telegram DM:
 
 Hidden compatibility shortcuts may open sections directly: `/help`, `/status`, `/model`, `/thinking`, `/queue`, and `/settings`.
 
+The thinking menu recognizes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+and `max`. Pi applies the selected model's supported thinking levels.
+
 This command surface is a mobile companion subset, not a raw terminal-command bridge. `/new` is the sole session-replacement control and is limited to the narrow host capability documented below; arbitrary slash-command dispatch and TUI manipulation remain outside the API.
 
 ### Tools and assistant-authored actions
