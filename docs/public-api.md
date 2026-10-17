@@ -555,3 +555,29 @@ render, edit, and acknowledge callbacks; section prompt enqueue is explicitly
 unsupported. Section callback tokens remain process-local. Native host tests use
 an actual durable Harness and synthetic provider; live Telegram/client evidence
 requires separate authorization and configuration.
+
+## Native durable host
+
+`@llblab/pi-telegram/durable` is a compiled ESM membrane for native hosts. It
+exports the existing lock and named-profile config stores, native Markdown
+normalization/final rendering, and preview controller. Its runtime import graph
+contains only Node built-ins. Coding-agent peers are optional for this subpath;
+legacy extension consumers must still provide their SDK peers.
+
+The host owns authenticated input acceptance, offset acknowledgement ordering,
+five-second ownership monitoring, shutdown, and final delivery receipts. A host
+must persist acceptance before increasing the polling offset. A live external
+owner must finish before takeover, even when its heartbeat has expired. Hosts
+with per-segment delivery ledgers should normalize each segment and perform one
+send per ledger entry rather than use the multi-chunk reply helper.
+
+Run `npm run build:durable` after changing exported implementation. The package
+ships the compiled module and emitted declarations so consumers do not execute
+TypeScript from node_modules. Neither entrypoint imports the experimental pilot.
+
+The fork's development SDK trio is pinned at 0.87.1, matching the reviewed
+legacy bridge and its existing `max` thinking-level contract. The inherited C1
+lock's 0.79.6 SDK cannot typecheck that contract. These are development-only
+packages; native consumers do not install them through optional peers. Existing
+TypeScript, Node typings, and TypeBox versions remain at their original locked
+versions. Native bundle generation adds exact esbuild 0.25.12.

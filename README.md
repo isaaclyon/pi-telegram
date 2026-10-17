@@ -312,3 +312,7 @@ The isolated candidate branch includes an opt-in
 [`prototype-durable` adapter](docs/public-api.md#isolated-durable-runtime-prototype)
 for synthetic native-Harness integration tests. It is not loaded by the standard
 extension and has no production parity or live Telegram claim.
+
+Native durable hosts can import the compiled `@llblab/pi-telegram/durable`
+ownership, configuration, Markdown and preview surface. See
+[the public API contract](docs/public-api.md#native-durable-host).

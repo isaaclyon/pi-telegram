@@ -125,3 +125,24 @@ test('prototype requires explicit ownership storage and transport', () => {
  assert.throws(() => createDurableTelegramPrototype({ ownership: { cwd: '/synthetic' } }), /locksPath/);
  assert.throws(() => createDurableTelegramPrototype({ ownership: { cwd: '/synthetic', locksPath: '/synthetic/locks' } }), /transport/);
 });
+
+import { readFileSync } from 'node:fs';
+import { normalizeTelegramNativeMarkdown, createTelegramPreviewRuntimeState, resolveTelegramLockKey } from '@llblab/pi-telegram/durable';
+test('native compiled API preserves existing rendering and profile ownership',()=>{
+ assert.equal(normalizeTelegramNativeMarkdown('> quote'),'>quote');
+ assert.equal(resolveTelegramLockKey('work'),'@llblab/pi-telegram:work');
+ assert.equal(createTelegramPreviewRuntimeState().pendingText,'');
+});
+test('native compiled runtime is independent of source-only and SDK modules',()=>{
+ const compiled=readFileSync(new URL('../api/durable.mjs',import.meta.url),'utf8');
+ const imports=[...compiled.matchAll(/from ["']([^"']+)["']/g)].map(m=>m[1]);
+ assert.ok(imports.length>0);assert.ok(imports.every(path=>path!.startsWith('node:')));
+ const declarations=readFileSync(new URL('../api/durable.d.mts',import.meta.url),'utf8');
+ assert.doesNotMatch(declarations,/\.ts["']/);
+});
+
+test('native compiled bundle matches its production source entrypoint', async()=>{
+ const {build}=await import('esbuild');
+ const built=await build({entryPoints:['api/durable.ts'],bundle:true,platform:'node',format:'esm',outfile:'api/durable.mjs',write:false});
+ assert.equal(built.outputFiles![0]!.text,readFileSync(new URL('../api/durable.mjs',import.meta.url),'utf8'));
+});

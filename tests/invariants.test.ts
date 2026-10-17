@@ -203,6 +203,7 @@ test("Package exports expose stable domains and the explicit experimental protot
     "./keyboard": "./api/keyboard.ts",
     "./host": "./api/host.ts",
     "./prototype-durable": "./api/prototype-durable.mjs",
+    "./durable": "./api/durable.mjs",
   });
 });
 

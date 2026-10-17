@@ -721,3 +721,10 @@
   preview, reply, rendering, and section helpers behind host runtime/transport
   ports. Standard extension behavior is unchanged. Deterministic coverage checks
   in-flight preview/final ordering and rejects implicit ownership/transport defaults.
+
+### Native host membrane
+
+- Add compiled `/durable` public exports for lock/configuration ownership,
+  native Markdown and previews, with standalone emitted declarations.
+- Make SDK peers optional for native-only consumers; legacy extension tests
+  retain explicit development SDK dependencies.

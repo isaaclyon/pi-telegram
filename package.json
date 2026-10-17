@@ -31,7 +31,8 @@
     "typecheck": "tsc --noEmit",
     "audit": "npm audit",
     "pack:check": "npm pack --dry-run",
-    "validate": "npm run typecheck && npm test && npm run audit && npm run pack:check"
+    "validate": "npm run typecheck && npm test && npm run audit && npm run pack:check",
+    "build:durable": "node scripts/build-durable.mjs"
   },
   "files": [
     "index.ts",
@@ -56,7 +57,8 @@
     "./voice": "./api/voice.ts",
     "./keyboard": "./api/keyboard.ts",
     "./host": "./api/host.ts",
-    "./prototype-durable": "./api/prototype-durable.mjs"
+    "./prototype-durable": "./api/prototype-durable.mjs",
+    "./durable": "./api/durable.mjs"
   },
   "pi": {
     "extensions": [
@@ -71,8 +73,13 @@
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "typescript": "latest"
+    "@earendil-works/pi-agent-core": "0.87.1",
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@sinclair/typebox": "0.34.49",
+    "@types/node": "25.9.3",
+    "esbuild": "0.25.12",
+    "typescript": "6.0.3"
   },
   "overrides": {
     "protobufjs": "7.6.4",
@@ -94,6 +101,20 @@
           "ws": "8.21.0"
         }
       }
+    }
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@sinclair/typebox": {
+      "optional": true
     }
   }
 }
