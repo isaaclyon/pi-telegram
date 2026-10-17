@@ -714,3 +714,10 @@
 - `[Registration]` Moved extension tool, command, and lifecycle-hook binding into the registration domain and added registration-focused regression coverage. Impact: extension wiring is easier to reason about and test without dragging full runtime state into every registration change.
 - `[Control Queue]` Moved `/status` and `/model` command handling onto high-priority control queue items. Impact: control actions can wait safely behind the current run while still jumping ahead of normal queued prompts.
 - `[Setup]` `/telegram-setup` now shows the stored bot token first, otherwise prefills from common Telegram bot environment variables before falling back to the placeholder, using an actual prefilled editor when a real default exists. Impact: repeat setup respects local saved state while first-run and secret-managed setup stay fast.
+
+## Unpublished prototype candidate
+
+- [Prototype] Add an explicit `prototype-durable` subpath composing existing lock,
+  preview, reply, rendering, and section helpers behind host runtime/transport
+  ports. Standard extension behavior is unchanged. Deterministic coverage checks
+  in-flight preview/final ordering and rejects implicit ownership/transport defaults.

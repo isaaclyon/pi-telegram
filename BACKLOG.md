@@ -105,3 +105,11 @@ Open work:
 - [ ] Keep unconfirmed speculative rewrites out of the delivery path.
 
 Done when: newly observed Rich Markdown failures have minimized fixtures and targeted regressions, while stable rendering behavior remains unchanged for unsupported guesses.
+
+## Prototype — Durable Runtime Evidence Gate
+
+The unpublished `prototype-durable` subpath is an isolated feasibility candidate.
+Promotion remains outside this release backlog: it requires reviewed lifecycle,
+queue/delivery recovery, broker authorization, attachment handling, parity scope,
+and separately authorized live Telegram/client evidence. Synthetic host tests
+and helper regressions alone do not satisfy that gate.

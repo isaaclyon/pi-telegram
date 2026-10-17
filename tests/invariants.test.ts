@@ -185,7 +185,7 @@ test("Preview domain stays independent from UI/compat rendering", () => {
   );
 });
 
-test("Package exports expose only stable public domains", () => {
+test("Package exports expose stable domains and the explicit experimental prototype", () => {
   const packageJson = JSON.parse(
     readFileSync(join(PROJECT_ROOT, "package.json"), "utf8"),
   ) as { exports?: Record<string, string> };
@@ -202,6 +202,7 @@ test("Package exports expose only stable public domains", () => {
     "./voice": "./api/voice.ts",
     "./keyboard": "./api/keyboard.ts",
     "./host": "./api/host.ts",
+    "./prototype-durable": "./api/prototype-durable.mjs",
   });
 });
 

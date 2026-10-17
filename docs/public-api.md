@@ -529,3 +529,29 @@ The following are not stable public contracts unless explicitly documented elsew
 - test support functions
 
 They are intentionally not exposed through a `./lib/*.ts` export wildcard in `0.12.0`.
+
+## Isolated durable-runtime prototype
+
+The unpublished candidate branch exposes `@llblab/pi-telegram/prototype-durable`
+from `api/prototype-durable.mjs`. This is an experimental composition root and an
+explicit exception to the stable TypeScript API membrane. The production root
+entrypoint remains unchanged and does not load it.
+
+`createDurableTelegramPrototype` takes one fixed `{chatId, threadId?}`, one
+`actorId`, a host `runtime.run(input, preview)` port, an explicit
+`transport.call(method, body)` port, and `ownership` containing `locksPath` and
+`cwd`. It composes existing lock, preview, native reply, UI rendering, and section
+helpers. The caller serializes turns and owns durable admission/recovery. There
+is no bot token, client construction, polling loop, or direct transport fallback.
+The host supplies its ordinary or restricted broker transport explicitly. The
+adapter copies input metadata (including synthetic attachment identities) before
+asynchronous dispatch. Metadata carriage does not implement attachment download,
+model ingestion, or outbound upload.
+
+This is a feasibility boundary, not production parity: no polling, queue recovery,
+exactly-once outbound receipts, session replacement, real broker authentication,
+menus, voice, tools, or household authorization are claimed. A direct section can
+render, edit, and acknowledge callbacks; section prompt enqueue is explicitly
+unsupported. Section callback tokens remain process-local. Native host tests use
+an actual durable Harness and synthetic provider; live Telegram/client evidence
+requires separate authorization and configuration.

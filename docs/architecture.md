@@ -326,3 +326,12 @@ Non-interactive `pi -p` runs must remain passive unless Pi provides a live Teleg
 - [Project Context](../AGENTS.md)
 - [Project Backlog](../BACKLOG.md)
 - [Changelog](../CHANGELOG.md)
+
+## Unpublished Prototype Exception
+
+`api/prototype-durable.mjs` is an opt-in experimental composition root outside the
+production entrypoint. It wires existing runtime-independent leaf helpers to
+narrow host runtime and transport ports, importing no legacy Pi runtime. This
+exception exists only to test a native durable Harness consumer. Promotion needs
+its own architecture review and live evidence; see the prototype public API
+contract for exclusions.

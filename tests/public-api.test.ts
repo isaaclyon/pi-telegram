@@ -79,3 +79,49 @@ test("Package-private lib implementation paths are not exported", async () => {
   await assertPackagePathNotExported("@llblab/pi-telegram/lib/sections.ts");
   await assertPackagePathNotExported("@llblab/pi-telegram/api/updates.ts");
 });
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+// Prototype JS boundary is intentionally independent of the legacy SDK.
+// @ts-ignore -- this prototype subpath has no published declaration contract.
+import { createDurableTelegramPrototype } from '@llblab/pi-telegram/prototype-durable';
+
+
+test('public prototype waits for the real preview flush before final without draft clearing', async () => {
+ const dir = mkdtempSync(join(tmpdir(), 'telegram-prototype-'));
+ const calls: string[] = [];
+ let release!: () => void;
+ const blocked = new Promise<void>(resolve => { release = resolve; });
+ let started!: () => void;
+ const draftStarted = new Promise<void>(resolve => { started = resolve; });
+ const target = { chatId: 100, threadId: 7 };
+ const adapter = createDurableTelegramPrototype({
+   target, actorId: 10,
+   ownership: { locksPath: join(dir, 'locks.json'), cwd: dir },
+   transport: { call: async (method: string, body: any) => {
+     calls.push(method);
+     assert.equal(body.chat_id, 100); assert.equal(body.message_thread_id, 7);
+     if (method === 'sendRichMessageDraft') { started(); await blocked; }
+     return { message_id: 20 };
+   } },
+   runtime: { run: async (_input: unknown, preview: (text: string) => Promise<void>) => {
+     void preview('Complete preview.');
+     await draftStarted;
+     return 'Final answer.';
+   } },
+ });
+ try {
+   assert.equal(adapter.connect().ok, true);
+   const receive = adapter.receive({ target, actorId: 10, messageId: 3, text: 'hello' });
+   await draftStarted;
+   assert.deepEqual(calls, ['sendRichMessageDraft']);
+   release(); await receive;
+   assert.deepEqual(calls, ['sendRichMessageDraft', 'sendRichMessage']);
+ } finally { release(); adapter.disconnect(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('prototype requires explicit ownership storage and transport', () => {
+ assert.throws(() => createDurableTelegramPrototype({ ownership: { cwd: '/synthetic' } }), /locksPath/);
+ assert.throws(() => createDurableTelegramPrototype({ ownership: { cwd: '/synthetic', locksPath: '/synthetic/locks' } }), /transport/);
+});

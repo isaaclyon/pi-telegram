@@ -305,3 +305,10 @@ Project context:
 - [AGENTS.md](./AGENTS.md) — engineering and runtime conventions.
 - [BACKLOG.md](./BACKLOG.md) — release-relevant open work.
 - [CHANGELOG.md](./CHANGELOG.md) — completed delivery history.
+
+### Unpublished durable-runtime pilot
+
+The isolated candidate branch includes an opt-in
+[`prototype-durable` adapter](docs/public-api.md#isolated-durable-runtime-prototype)
+for synthetic native-Harness integration tests. It is not loaded by the standard
+extension and has no production parity or live Telegram claim.

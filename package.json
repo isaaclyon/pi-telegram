@@ -55,7 +55,8 @@
     "./status": "./api/status.ts",
     "./voice": "./api/voice.ts",
     "./keyboard": "./api/keyboard.ts",
-    "./host": "./api/host.ts"
+    "./host": "./api/host.ts",
+    "./prototype-durable": "./api/prototype-durable.mjs"
   },
   "pi": {
     "extensions": [
