@@ -90,16 +90,16 @@ function writeLocks(path, locks) {
 function parseTelegramLockEntry(value) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return void 0;
-  const record = value;
-  if (typeof record.pid !== "number") return void 0;
+  const record2 = value;
+  if (typeof record2.pid !== "number") return void 0;
   return {
-    pid: record.pid,
-    cwd: typeof record.cwd === "string" ? record.cwd : void 0,
-    instanceId: typeof record.instanceId === "string" ? record.instanceId : void 0,
-    heartbeatMs: typeof record.heartbeatMs === "number" ? record.heartbeatMs : void 0,
-    leaderEpoch: typeof record.leaderEpoch === "number" ? record.leaderEpoch : void 0,
-    busSocketPath: typeof record.busSocketPath === "string" ? record.busSocketPath : void 0,
-    busSecret: typeof record.busSecret === "string" ? record.busSecret : void 0
+    pid: record2.pid,
+    cwd: typeof record2.cwd === "string" ? record2.cwd : void 0,
+    instanceId: typeof record2.instanceId === "string" ? record2.instanceId : void 0,
+    heartbeatMs: typeof record2.heartbeatMs === "number" ? record2.heartbeatMs : void 0,
+    leaderEpoch: typeof record2.leaderEpoch === "number" ? record2.leaderEpoch : void 0,
+    busSocketPath: typeof record2.busSocketPath === "string" ? record2.busSocketPath : void 0,
+    busSecret: typeof record2.busSecret === "string" ? record2.busSecret : void 0
   };
 }
 function isProcessAlive(pid) {
@@ -992,13 +992,291 @@ async function flushTelegramPreview(chatId, deps, options = {}) {
     }
   }
 }
+
+// lib/native-media.ts
+var TELEGRAM_NATIVE_MEDIA_LIMITS = { maxFilesPerMessage: 10, maxFileBytes: 20 * 1024 * 1024, maxTextChars: 8192 };
+var IMAGE_MIME_TYPES = /* @__PURE__ */ new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp"
+]);
+var MIME_EXTENSIONS = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "audio/ogg": ".ogg",
+  "audio/mpeg": ".mp3",
+  "audio/mp4": ".m4a",
+  "video/mp4": ".mp4",
+  "application/pdf": ".pdf",
+  "text/plain": ".txt"
+};
+var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+var positiveInteger = (value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+function isTelegramNativeImageMimeType(mimeType) {
+  return mimeType !== void 0 && IMAGE_MIME_TYPES.has(mimeType.toLowerCase());
+}
+function sanitizeTelegramNativeFileName(value, fallback) {
+  const base = (value ?? "").split(/[\\/]/).pop() ?? "";
+  const cleaned = base.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "").replace(/^\.+/, "").trim().slice(0, 120);
+  return cleaned.length > 0 ? cleaned : fallback;
+}
+function mimeOf(value) {
+  if (typeof value !== "string") return void 0;
+  const mime = value.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/.test(mime) ? mime : void 0;
+}
+function decodeFile(kind, raw, messageId, limits, defaults) {
+  const fileId = raw.file_id;
+  if (typeof fileId !== "string" || fileId.length === 0 || fileId.length > 512)
+    return `Invalid ${kind} file reference.`;
+  const size = raw.file_size;
+  if (size !== void 0 && (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0))
+    return `Invalid ${kind} size.`;
+  if (size !== void 0 && size > limits.maxFileBytes)
+    return `The ${kind} is larger than the ${limits.maxFileBytes}-byte limit.`;
+  const mimeType = defaults.mime ?? mimeOf(raw.mime_type);
+  const extension = (mimeType && MIME_EXTENSIONS[mimeType]) ?? "";
+  const fallback = `${defaults.name}${extension}`;
+  const name = sanitizeTelegramNativeFileName(
+    typeof raw.file_name === "string" ? raw.file_name : void 0,
+    fallback
+  );
+  const unique = raw.file_unique_id;
+  return {
+    kind,
+    fileId,
+    ...typeof unique === "string" && unique.length > 0 && unique.length <= 128 ? { fileUniqueId: unique } : {},
+    name,
+    ...mimeType ? { mimeType } : {},
+    ...size === void 0 ? {} : { declaredSize: size },
+    image: defaults.image ?? isTelegramNativeImageMimeType(mimeType),
+    messageId
+  };
+}
+function decodeTelegramNativeMedia(raw, limits = TELEGRAM_NATIVE_MEDIA_LIMITS) {
+  const message = record(raw);
+  if (!message) return { type: "none" };
+  const hasMedia = ["photo", "document", "video", "audio", "voice", "animation", "sticker", "video_note"].some((key) => message[key] !== void 0);
+  if (!hasMedia && message.media_group_id === void 0) return { type: "none" };
+  const messageId = message.message_id;
+  const date = message.date;
+  const chat = record(message.chat);
+  if (!positiveInteger(messageId) || typeof date !== "number" || !Number.isSafeInteger(date) || date < 0 || typeof chat?.id !== "number" || !Number.isSafeInteger(chat.id))
+    return { type: "rejected", reason: "Invalid media message identity." };
+  if (message.video_note !== void 0)
+    return { type: "rejected", reason: "Video notes are not supported." };
+  if (message.media_group_id !== void 0 && (typeof message.media_group_id !== "string" || message.media_group_id.length === 0 || message.media_group_id.length > 128))
+    return { type: "rejected", reason: "Invalid media group identity." };
+  const text = typeof message.caption === "string" ? message.caption : typeof message.text === "string" ? message.text : "";
+  if (text.length > limits.maxTextChars)
+    return { type: "rejected", reason: "The message text is too long." };
+  const files = [];
+  const add = (value) => {
+    if (typeof value === "string") return value;
+    files.push(value);
+    return void 0;
+  };
+  let failure;
+  if (message.photo !== void 0) {
+    if (!Array.isArray(message.photo) || message.photo.length === 0 || message.photo.length > 20)
+      return { type: "rejected", reason: "Invalid photo sizes." };
+    const sizes = message.photo.map(record);
+    if (sizes.some((size) => size === void 0)) return { type: "rejected", reason: "Invalid photo sizes." };
+    const usable = sizes.filter((size) => typeof size.file_size !== "number" || size.file_size <= limits.maxFileBytes).sort((a, b) => Number(a.file_size ?? 0) - Number(b.file_size ?? 0));
+    const best = usable.pop();
+    if (!best) return { type: "rejected", reason: "The photo is larger than the file limit." };
+    failure ??= add(decodeFile("photo", best, messageId, limits, { name: `photo-${messageId}`, mime: "image/jpeg", image: true }));
+  }
+  for (const kind of ["document", "video", "audio", "voice", "animation"]) {
+    const value = message[kind];
+    if (value === void 0) continue;
+    const item = record(value);
+    if (!item) return { type: "rejected", reason: `Invalid ${kind}.` };
+    failure ??= add(decodeFile(kind, item, messageId, limits, { name: `${kind}-${messageId}`, ...kind === "voice" && mimeOf(item.mime_type) === void 0 ? { mime: "audio/ogg" } : {} }));
+  }
+  if (message.sticker !== void 0) {
+    const item = record(message.sticker);
+    if (!item) return { type: "rejected", reason: "Invalid sticker." };
+    const animated = item.is_animated === true || item.is_video === true;
+    failure ??= add(decodeFile("sticker", item, messageId, limits, {
+      name: `sticker-${messageId}${item.is_animated === true ? ".tgs" : item.is_video === true ? ".webm" : ""}`,
+      ...animated ? { image: false } : { mime: "image/webp", image: true }
+    }));
+  }
+  if (failure) return { type: "rejected", reason: failure };
+  if (files.length > limits.maxFilesPerMessage)
+    return { type: "rejected", reason: "Too many files in one message." };
+  if (files.length === 0) return { type: "none" };
+  return {
+    type: "message",
+    message: {
+      messageId,
+      date,
+      chatId: chat.id,
+      ...typeof message.media_group_id === "string" ? { mediaGroupId: message.media_group_id } : {},
+      text,
+      files
+    }
+  };
+}
+function mergeMessages(messages, limits) {
+  const sorted = [...messages].sort((a, b) => a.messageId - b.messageId);
+  const texts = [];
+  for (const message of sorted)
+    if (message.text.length > 0 && !texts.includes(message.text)) texts.push(message.text);
+  const text = texts.join("\n\n");
+  if (text.length > limits.maxTextChars) return "The group text is too long.";
+  return {
+    chatId: sorted[0].chatId,
+    messageIds: sorted.map((message) => message.messageId),
+    date: Math.min(...sorted.map((message) => message.date)),
+    text,
+    files: sorted.flatMap((message) => message.files)
+  };
+}
+function createTelegramNativeMediaGroups(options = {}) {
+  const quietMs = options.quietMs ?? 1200;
+  const maxAgeMs = options.maxAgeMs ?? 1e4;
+  const maxMessages = options.maxMessagesPerGroup ?? 10;
+  const maxGroups = options.maxPendingGroups ?? 16;
+  const limits = options.limits ?? TELEGRAM_NATIVE_MEDIA_LIMITS;
+  const groups = /* @__PURE__ */ new Map();
+  const poisoned = /* @__PURE__ */ new Map();
+  const dueAt = (group) => Math.min(group.lastAt + quietMs, group.firstAt + maxAgeMs);
+  const key = (message) => `${message.chatId}:${message.mediaGroupId}`;
+  return {
+    add(message, now) {
+      if (message.mediaGroupId === void 0) {
+        const merged = mergeMessages([message], limits);
+        return typeof merged === "string" ? { type: "rejected", reason: merged, messageIds: [message.messageId] } : { type: "ready", input: merged };
+      }
+      const groupKey = key(message);
+      const until = poisoned.get(groupKey);
+      if (until !== void 0 && until > now)
+        return { type: "rejected", reason: "This album was rejected.", messageIds: [message.messageId] };
+      let group = groups.get(groupKey);
+      if (!group) {
+        if (groups.size >= maxGroups)
+          return { type: "rejected", reason: "Too many albums are pending.", messageIds: [message.messageId] };
+        group = { messages: /* @__PURE__ */ new Map(), firstAt: now, lastAt: now };
+        groups.set(groupKey, group);
+      }
+      if (!group.messages.has(message.messageId)) {
+        if (group.messages.size >= maxMessages) {
+          const ids = [...group.messages.keys(), message.messageId].sort((a, b) => a - b);
+          groups.delete(groupKey);
+          poisoned.set(groupKey, now + maxAgeMs);
+          return { type: "rejected", reason: "The album has too many messages.", messageIds: ids };
+        }
+        group.messages.set(message.messageId, message);
+      }
+      group.lastAt = now;
+      return { type: "pending", dueAt: dueAt(group) };
+    },
+    /** Remove and return every group whose quiet period or age limit has passed. */
+    collect(now) {
+      const ready = [];
+      const rejected = [];
+      for (const [groupKey, group] of groups) {
+        if (dueAt(group) > now) continue;
+        groups.delete(groupKey);
+        const merged = mergeMessages([...group.messages.values()], limits);
+        if (typeof merged === "string") rejected.push({ reason: merged, messageIds: [...group.messages.keys()].sort((a, b) => a - b) });
+        else ready.push(merged);
+      }
+      for (const [groupKey, until] of poisoned) if (until <= now) poisoned.delete(groupKey);
+      ready.sort((a, b) => a.messageIds[0] - b.messageIds[0]);
+      return { ready, rejected };
+    },
+    nextDueAt() {
+      let next;
+      for (const group of groups.values()) next = next === void 0 ? dueAt(group) : Math.min(next, dueAt(group));
+      return next;
+    },
+    pending() {
+      return groups.size;
+    }
+  };
+}
+var TelegramNativeVoiceError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "TelegramNativeVoiceError";
+    this.code = code;
+  }
+};
+async function transcribeTelegramNativeVoice(file, options) {
+  const provider = options.provider;
+  if (!provider) throw new TelegramNativeVoiceError("no_provider", "Voice transcription is not configured.");
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? 6e4;
+  const abort = () => controller.abort();
+  if (options.signal?.aborted) throw new TelegramNativeVoiceError("failed", "Voice transcription was aborted.");
+  options.signal?.addEventListener("abort", abort, { once: true });
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new TelegramNativeVoiceError("timeout", "Voice transcription timed out."));
+        controller.abort();
+      }, timeoutMs);
+    });
+    const aborted = new Promise((_, reject) => {
+      controller.signal.addEventListener("abort", () => reject(new TelegramNativeVoiceError("failed", "Voice transcription was aborted.")), { once: true });
+    });
+    let result;
+    try {
+      result = await Promise.race([provider(file, { signal: controller.signal }), timeout, aborted]);
+    } catch (error) {
+      if (error instanceof TelegramNativeVoiceError) throw error;
+      throw new TelegramNativeVoiceError("failed", "Voice transcription failed.");
+    }
+    const raw = typeof result === "string" ? result : result?.text;
+    const text = (typeof raw === "string" ? raw : "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
+    if (text.length === 0) throw new TelegramNativeVoiceError("empty", "The voice message had no recognizable speech.");
+    const max = options.maxChars ?? 8e3;
+    return text.length > max ? `${text.slice(0, max).trimEnd()}\u2026` : text;
+  } finally {
+    if (timer) clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abort);
+  }
+}
+function formatTelegramNativeMediaPrompt(input, annotations) {
+  if (annotations.length !== input.files.length)
+    throw new Error("Media annotations do not match the files.");
+  const lines = [];
+  input.files.forEach((file, index) => {
+    const note = annotations[index];
+    const attributes = [file.kind, file.mimeType, file.declaredSize === void 0 ? void 0 : `${file.declaredSize} bytes`].filter(Boolean).join(", ");
+    const suffix = note.imageAttached ? " (image attached)" : file.kind === "voice" || file.kind === "audio" ? "" : " (content not read)";
+    lines.push(`- ${JSON.stringify(file.name)} [${attributes}] artifact ${note.artifactId}${suffix}`);
+    if (note.transcript !== void 0) lines.push(`  transcript: ${JSON.stringify(note.transcript)}`);
+  });
+  const header = input.text.length > 0 ? input.text : "(no text)";
+  return lines.length === 0 ? header : `${header}
+
+[attachments]
+${lines.join("\n")}`;
+}
 export {
+  TELEGRAM_NATIVE_MEDIA_LIMITS,
+  TelegramNativeVoiceError,
   createTelegramConfigStore,
   createTelegramLockRuntime,
+  createTelegramNativeMediaGroups,
   createTelegramPreviewRuntimeState,
+  decodeTelegramNativeMedia,
   flushTelegramPreview,
+  formatTelegramNativeMediaPrompt,
   isProcessAlive,
+  isTelegramNativeImageMimeType,
   normalizeTelegramNativeMarkdown,
   resolveTelegramLockKey,
-  sendTelegramNativeMarkdownReply
+  sanitizeTelegramNativeFileName,
+  sendTelegramNativeMarkdownReply,
+  transcribeTelegramNativeVoice
 };

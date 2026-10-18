@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased: Native Inbound Media
+
+- [Native host] Expose strict media decoding, deterministic album grouping, bounded voice transcription and attachment prompt text through the compiled `./durable` entry. The host owns bytes, storage and providers.
+
 ## Unreleased: Pi 0.87 Compatibility
 
 - Accept and display Pi's `max` thinking level in model selection and the thinking menu, preserving the active marker and callback round-trip.
